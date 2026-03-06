@@ -47,6 +47,18 @@ file and include this one to launch KimeraVIO on the dataset of your choice -->
        IMU and camera -->
   <arg name="do_fine_temporal_sync" default="false"/>
 
+  <!-- zy Step 3_a -->
+  <!-- Exposes CBS external-pose bridge controls at launch level (enable + topics + source tags). -->
+  <arg name="enable_external_pose_bridge" default="false"/>
+  <!-- zy Step 4_a -->
+  <!-- Kimera publishes beliefs onto LIORF's default prior topic to avoid extra remap/param edits. -->
+  <arg name="external_pose_belief_topic" default="/liorf/cbs/external_pose_prior"/>
+  <arg name="external_pose_prior_topic" default="/liorf/cbs/external_pose_belief"/>
+  <arg name="external_pose_belief_source" default="kimera"/>
+  <arg name="external_prior_default_source" default="liorf"/>
+  <arg name="external_exchange_frame_id" default="$(arg odom_frame_id)"/>
+
+
   <!-- Parameters -->
   <!-- each dataset has its own set of parameter files -->
   <!-- the parameters are set in param folder, ordered by the dataset's name -->
@@ -168,6 +180,16 @@ file and include this one to launch KimeraVIO on the dataset of your choice -->
     <param name="map_frame_id"       value="$(arg map_frame_id)"/>
     <param name="left_cam_frame_id"  value="$(arg left_cam_frame_id)"/>
     <param name="right_cam_frame_id" value="$(arg right_cam_frame_id)"/>
+
+    <!-- zy Step 3_b -->
+    <!-- Sends launch bridge config to KimeraVioRos private params consumed in constructor. -->
+    <param name="enable_external_pose_bridge" value="$(arg enable_external_pose_bridge)"/>
+    <param name="external_pose_belief_topic" value="$(arg external_pose_belief_topic)"/>
+    <param name="external_pose_prior_topic" value="$(arg external_pose_prior_topic)"/>
+    <param name="external_pose_belief_source" value="$(arg external_pose_belief_source)"/>
+    <param name="external_prior_default_source" value="$(arg external_prior_default_source)"/>
+    <param name="external_exchange_frame_id" value="$(arg external_exchange_frame_id)"/>
+
 
     <!-- Subscriber topics -->
     <!-- if we run online, use remap -->

@@ -8,6 +8,15 @@
 
 #include <future>
 
+// zy Step 2_f
+// Adds helpers for source normalization and robust ROS message parsing.
+#include <algorithm>
+#include <cctype>
+#include <cmath>
+#include "kimera_vio_ros/utils/UtilsRos.h"
+
+
+
 // Still need gflags for parameters in VIO
 #include <gflags/gflags.h>
 #include <glog/logging.h>
@@ -28,6 +37,7 @@
 #include "kimera_vio_ros/RosBagDataProvider.h"
 #include "kimera_vio_ros/RosDataProviderInterface.h"
 #include "kimera_vio_ros/RosOnlineDataProvider.h"
+#include "kimera_vio_ros/utils/UtilsRos.h"
 
 namespace VIO {
 
@@ -52,6 +62,44 @@ KimeraVioRos::KimeraVioRos()
 
   nh_private_.getParam("use_lcd_registration_server",
                        use_lcd_registration_server_);
+  
+  // zy Step 1_c
+  // Loads external-bridge ROS params early so later callback wiring uses one consistent config source.
+  nh_private_.param<bool>("enable_external_pose_bridge",
+                          enable_external_pose_bridge_,
+                          false);
+  // zy Step 4_c
+  // Uses LIORF-compatible topic when no ROS param override is provided.
+  nh_private_.param<std::string>("external_pose_belief_topic",
+                                external_pose_belief_topic_,
+                                "/liorf/cbs/external_pose_prior");
+
+  // zy Step 5_b
+  // Uses LIORF belief topic as default incoming prior channel when launch does not override.
+  nh_private_.param<std::string>("external_pose_prior_topic",
+                               external_pose_prior_topic_,
+                               "/liorf/cbs/external_pose_belief");
+
+  nh_private_.param<std::string>("external_pose_belief_source",
+                                 external_pose_belief_source_,
+                                 "kimera");
+  nh_private_.param<std::string>("external_prior_default_source",
+                                 external_prior_default_source_,
+                                 "liorf");
+
+  std::string odom_frame_id = "odom";
+  nh_private_.param<std::string>("odom_frame_id", odom_frame_id, "odom");
+  nh_private_.param<std::string>("external_exchange_frame_id",
+                                 external_exchange_frame_id_,
+                                 odom_frame_id);
+
+  LOG(INFO) << "External pose bridge config: enabled="
+            << enable_external_pose_bridge_
+            << ", belief_topic=" << external_pose_belief_topic_
+            << ", prior_topic=" << external_pose_prior_topic_
+            << ", source=" << external_pose_belief_source_
+            << ", frame_id=" << external_exchange_frame_id_;
+
 
   // Parse VIO parameters
   std::string params_path;
@@ -272,6 +320,102 @@ RosDataProviderInterface::UniquePtr KimeraVioRos::createDataProvider(
   }
 }
 
+// zy Step 2_d
+// Converts source labels to canonical tags so both estimators use the same sender identity.
+std::string KimeraVioRos::normalizeExternalSourceTag(
+    const std::string& source) const {
+  std::string normalized = source;
+  std::transform(normalized.begin(),
+                 normalized.end(),
+                 normalized.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  normalized.erase(
+      std::remove_if(normalized.begin(),
+                     normalized.end(),
+                     [](unsigned char c) { return std::isspace(c) != 0; }),
+      normalized.end());
+  while (!normalized.empty() && normalized.front() == '/') {
+    normalized.erase(normalized.begin());
+  }
+  return normalized.empty() ? std::string("unknown") : normalized;
+}
+
+// zy Step 2_e
+// Publishes Kimera belief (W_Pose_B + covariance at keyframe timestamp) on ROS for external fusion.
+void KimeraVioRos::publishExternalPoseBelief(
+    const VioBackend::ExternalPoseBelief& belief) {
+  if (!enable_external_pose_bridge_) return;
+  if (belief.timestamp_kf_nsec_ <= 0) return;
+
+  nav_msgs::Odometry msg;
+  msg.header.seq = external_pose_belief_seq_counter_++;
+  msg.header.stamp.fromNSec(static_cast<uint64_t>(belief.timestamp_kf_nsec_));
+  msg.header.frame_id = external_exchange_frame_id_;
+  msg.child_frame_id = normalizeExternalSourceTag(external_pose_belief_source_);
+
+  const gtsam::Quaternion& q = belief.W_Pose_B_.rotation().toQuaternion();
+  msg.pose.pose.position.x = belief.W_Pose_B_.x();
+  msg.pose.pose.position.y = belief.W_Pose_B_.y();
+  msg.pose.pose.position.z = belief.W_Pose_B_.z();
+  msg.pose.pose.orientation.w = q.w();
+  msg.pose.pose.orientation.x = q.x();
+  msg.pose.pose.orientation.y = q.y();
+  msg.pose.pose.orientation.z = q.z();
+
+  // GTSAM pose covariance order: [rx ry rz tx ty tz]
+  // ROS odom covariance order:   [tx ty tz rx ry rz]
+  static const int remap[6] = {3, 4, 5, 0, 1, 2};
+  for (int i = 0; i < 6; i++) {
+    for (int j = 0; j < 6; j++) {
+      msg.pose.covariance[remap[i] * 6 + remap[j]] = belief.covariance_(i, j);
+    }
+  }
+
+  pub_external_pose_belief_.publish(msg);
+}
+
+// zy Step 2_f
+// Converts incoming ROS prior into Kimera's W_Pose_B + covariance and enqueues it for next backend optimize.
+void KimeraVioRos::externalPosePriorCallback(
+    const nav_msgs::Odometry::ConstPtr& msg) {
+  if (!enable_external_pose_bridge_) return;
+  if (!msg) return;
+  if (!vio_pipeline_) return;
+
+  const Timestamp ts_nsec = static_cast<Timestamp>(msg->header.stamp.toNSec());
+  if (ts_nsec <= 0) {
+    LOG(WARNING) << "External prior ignored: invalid timestamp.";
+    return;
+  }
+
+  gtsam::Pose3 W_Pose_B;
+  VIO::utils::rosOdometryToGtsamPose(*msg, &W_Pose_B);
+
+  gtsam::Matrix6 covariance = gtsam::Matrix6::Zero();
+  static const int remap[6] = {3, 4, 5, 0, 1, 2};
+  for (int i = 0; i < 6; i++) {
+    for (int j = 0; j < 6; j++) {
+      covariance(i, j) = msg->pose.covariance[remap[i] * 6 + remap[j]];
+    }
+  }
+  covariance = 0.5 * (covariance + covariance.transpose());
+
+  std::string source = normalizeExternalSourceTag(msg->child_frame_id);
+  if (source == "unknown") {
+    source = normalizeExternalSourceTag(external_prior_default_source_);
+  }
+
+  const bool queued = vio_pipeline_->enqueueExternalPosePriorFromCovariance(
+      ts_nsec, W_Pose_B, covariance, source, static_cast<uint64_t>(msg->header.seq));
+
+  if (!queued) {
+    LOG(WARNING) << "External prior rejected by Kimera queue. ts_nsec=" << ts_nsec
+                 << ", source=" << source;
+  }
+}
+
+
+
 void KimeraVioRos::connectVIO() {
   // Register VIO pipeline callbacks
   // Register callback to shutdown data provider in case VIO pipeline
@@ -312,6 +456,28 @@ void KimeraVioRos::connectVIO() {
                   std::ref(*stereo_pipeline),
                   std::placeholders::_1));
   }
+
+  // zy Step 2_g
+  // Enables Kimera<->LIORF bridge only when requested, preserving default behavior when disabled.
+  if (enable_external_pose_bridge_) {
+    pub_external_pose_belief_ =
+        nh_private_.advertise<nav_msgs::Odometry>(external_pose_belief_topic_, 20);
+    sub_external_pose_prior_ = nh_private_.subscribe<nav_msgs::Odometry>(
+        external_pose_prior_topic_,
+        200,
+        &KimeraVioRos::externalPosePriorCallback,
+        this);
+
+    vio_pipeline_->registerExternalPoseBeliefCallback(
+        std::bind(&KimeraVioRos::publishExternalPoseBelief,
+                  this,
+                  std::placeholders::_1));
+
+    LOG(INFO) << "External pose bridge connected. publish_topic="
+              << external_pose_belief_topic_
+              << ", subscribe_topic=" << external_pose_prior_topic_;
+  }
+
 
   if (vio_params_->frontend_type_ == VIO::FrontendType::kRgbdImu) {
     data_provider_->registerDepthFrameCallback(std::bind(

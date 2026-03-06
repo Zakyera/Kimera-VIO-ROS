@@ -6,6 +6,14 @@
 #include <ros/ros.h>
 #include <std_srvs/Trigger.h>
 
+// zy Step 1_a
+// Adds message and string types needed by the Kimera-LIORF external pose bridge.
+#include <nav_msgs/Odometry.h>
+#include <string>
+#include <atomic>
+#include <cstdint>
+
+
 #include <kimera-vio/pipeline/Pipeline-definitions.h>
 #include <kimera-vio/pipeline/Pipeline.h>
 #include <kimera-vio/utils/Macros.h>
@@ -36,6 +44,20 @@ class KimeraVioRos {
       const VioParams& vio_params);
 
   void connectVIO();
+  
+    // zy Step 2_a
+  // Publishes Kimera external pose belief as ROS odometry for LIORF/CBS consumers.
+  void publishExternalPoseBelief(
+      const VioBackend::ExternalPoseBelief& belief);
+
+  // zy Step 2_b
+  // Receives external ROS prior and forwards it to Kimera backend prior queue.
+  void externalPosePriorCallback(const nav_msgs::Odometry::ConstPtr& msg);
+
+  // zy Step 2_c
+  // Normalizes source tags to stable lowercase names for source filtering/mapping.
+  std::string normalizeExternalSourceTag(const std::string& source) const;
+
 
   /**
    * @brief restartKimeraVio Callback for the rosservice to restart the pipeline
@@ -49,6 +71,23 @@ class KimeraVioRos {
  protected:
   //! ROS
   ros::NodeHandle nh_private_;
+
+  // zy Step 1_b
+  // Stores bridge runtime config and ROS handles so topic wiring is explicit and launch-driven.
+  bool enable_external_pose_bridge_ = false;
+  // zy Step 4_b
+  // Keeps internal default consistent with launch-level LIORF-compatible handshake.
+  std::string external_pose_belief_topic_ = "/liorf/cbs/external_pose_prior";
+  // zy Step 5_a
+  // Keeps fallback receive-topic aligned with LIORF's default belief publisher.
+  std::string external_pose_prior_topic_ = "/liorf/cbs/external_pose_belief";
+  std::string external_pose_belief_source_ = "kimera";
+  std::string external_prior_default_source_ = "liorf";
+  std::string external_exchange_frame_id_ = "odom";
+  uint32_t external_pose_belief_seq_counter_ = 0;
+  ros::Publisher pub_external_pose_belief_;
+  ros::Subscriber sub_external_pose_prior_;
+
 
   //! VIO
   VioParams::Ptr vio_params_;

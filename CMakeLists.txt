@@ -7,6 +7,18 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(catkin_simple REQUIRED)
 
+# zy Step 1_fix_a
+# Ensures downstream linking can resolve libcbs when kimera_vio exports a CBS dependency.
+set(_CBS_SRC_HINT "${CMAKE_CURRENT_SOURCE_DIR}/../../../cbs_ws/src/cbs")
+if(NOT cbs_DIR AND EXISTS "${_CBS_SRC_HINT}/build/cbsConfig.cmake")
+  set(cbs_DIR "${_CBS_SRC_HINT}/build" CACHE PATH
+      "Directory containing cbsConfig.cmake")
+endif()
+find_package(cbs QUIET CONFIG)
+if(EXISTS "${_CBS_SRC_HINT}/build")
+  link_directories("${_CBS_SRC_HINT}/build")
+endif()
+
 ### System Dependencies
 find_package(Boost REQUIRED COMPONENTS
   serialization system filesystem thread date_time regex timer chrono)
@@ -42,6 +54,9 @@ cs_add_library(${PROJECT_NAME}
   src/utils/CsvPublisher.cpp
 )
 target_link_libraries(${PROJECT_NAME} kimera_vio)
+if(cbs_FOUND)
+  target_link_libraries(${PROJECT_NAME} cbs)
+endif()
 
 cs_add_executable(${PROJECT_NAME}_node
   src/KimeraVioRosNode.cpp
