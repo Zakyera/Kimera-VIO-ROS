@@ -1,0 +1,90 @@
+<!-- M2DGR hall_02 launch wrapper for Kimera-VIO.
+     Uses Kimera-VIO-ROS generic launcher and sets dataset/topics.
+-->
+<launch>
+  <!-- Dataset params folder name under kimera_vio/params -->
+  <arg name="dataset_name" default="MD2GR_hall_02"/>
+  <!-- Optional override (mirrors GEODE usage) -->
+  <arg name="params_folder" default="$(find kimera_vio)/params/$(arg dataset_name)"/>
+
+  <!-- Bag publishes /clock -->
+  <arg name="online" default="true"/>
+  <arg name="should_use_sim_time" default="true"/>
+
+  <!-- M2DGR hall_02 topics (bag contains *CompressedImage) -->
+  <arg name="left_cam_topic"  default="/camera/left/image_raw"/>
+  <arg name="right_cam_topic" default="/camera/right/image_raw"/>
+  <arg name="imu_topic"       default="/camera/imu"/>
+
+  <!-- Tell image_transport to use .../compressed -->
+  <arg name="rgb_image_transport" default="compressed"/>
+
+  <!-- Match GEODE-style commonly used knobs -->
+  <arg name="multirobot" default="true"/>
+  <arg name="use_lcd" default="false"/>
+  <arg name="use_external_odom" default="false"/>
+  <arg name="include_pipeline_flags" default="false"/>
+  <arg name="no_incremental_pose" default="true"/>
+
+  <!-- Visualization (often disabled for benchmarks) -->
+  <arg name="visualize" default="false"/>
+  <arg name="use_rviz" default="false"/>
+
+  <!-- Logging -->
+  <arg name="log_output" default="true"/>
+  <arg name="log_output_path" default="/tmp/ate/kimera_m2dgr_hall02/"/>
+
+  <!-- Verbosity -->
+  <arg name="verbosity" default="0"/>
+  <arg name="minloglevel" default="0"/>
+
+  <!-- CBS external pose bridge (Kimera <-> LIORF) -->
+  <arg name="enable_external_pose_bridge" default="true"/>
+  <arg name="external_pose_belief_topic" default="/kimera/cbs/external_pose_prior_unused"/>
+  <arg name="external_pose_prior_topic" default="/liorf/cbs/external_pose_belief"/>
+  <arg name="external_prior_default_source" default="liorf"/>
+
+  <!-- Optionally tune frames -->
+  <arg name="odom_frame_id" default="odom"/>
+  <arg name="base_link_frame_id" default="base_link"/>
+  <arg name="map_frame_id" default="map"/>
+
+  <include file="$(find kimera_vio_ros)/launch/kimera_vio_ros.launch">
+    <arg name="multirobot" value="$(arg multirobot)"/>
+
+    <arg name="dataset_name" value="$(arg dataset_name)"/>
+    <arg name="params_folder" value="$(arg params_folder)"/>
+
+    <arg name="online" value="$(arg online)"/>
+    <arg name="should_use_sim_time" value="$(arg should_use_sim_time)"/>
+
+    <arg name="left_cam_topic" value="$(arg left_cam_topic)"/>
+    <arg name="right_cam_topic" value="$(arg right_cam_topic)"/>
+    <arg name="imu_topic" value="$(arg imu_topic)"/>
+
+    <arg name="rgb_image_transport" value="$(arg rgb_image_transport)"/>
+
+    <arg name="use_lcd" value="$(arg use_lcd)"/>
+    <arg name="use_external_odom" value="$(arg use_external_odom)"/>
+    <arg name="enable_external_pose_bridge" value="$(arg enable_external_pose_bridge)"/>
+    <arg name="external_pose_belief_topic" value="$(arg external_pose_belief_topic)"/>
+    <arg name="external_pose_prior_topic" value="$(arg external_pose_prior_topic)"/>
+    <arg name="external_prior_default_source" value="$(arg external_prior_default_source)"/>
+
+    <arg name="include_pipeline_flags" value="$(arg include_pipeline_flags)"/>
+    <arg name="no_incremental_pose" value="$(arg no_incremental_pose)"/>
+
+    <arg name="visualize" value="$(arg visualize)"/>
+    <arg name="use_rviz" value="$(arg use_rviz)"/>
+
+    <arg name="log_output" value="$(arg log_output)"/>
+    <arg name="log_output_path" value="$(arg log_output_path)"/>
+
+    <arg name="verbosity" value="$(arg verbosity)"/>
+    <arg name="minloglevel" value="$(arg minloglevel)"/>
+
+    <arg name="odom_frame_id" value="$(arg odom_frame_id)"/>
+    <arg name="base_link_frame_id" value="$(arg base_link_frame_id)"/>
+    <arg name="map_frame_id" value="$(arg map_frame_id)"/>
+  </include>
+</launch>

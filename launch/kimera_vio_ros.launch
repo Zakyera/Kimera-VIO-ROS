@@ -129,6 +129,12 @@ file and include this one to launch KimeraVIO on the dataset of your choice -->
   <arg name="glog_args" value="--logtostderr=0 --log_dir=$(arg glog_dir)" if="$(arg glog_to_dir)"/>
   <arg name="glog_args" value="--logtostderr=1" unless="$(arg glog_to_dir)"/>
 
+  <!-- Allow disabling heavy mesher/3D visualizer flagfiles when running headless (saves RAM). -->
+  <arg name="mesher_flag_args" value="--flagfile=$(arg flags_folder)/Mesher.flags" if="$(arg visualize)"/>
+  <arg name="mesher_flag_args" value="" unless="$(arg visualize)"/>
+  <arg name="visualizer_flag_args" value="--flagfile=$(arg flags_folder)/Visualizer3D.flags" if="$(arg visualize)"/>
+  <arg name="visualizer_flag_args" value="" unless="$(arg visualize)"/>
+
   <!-- Launch main node  -->
   <node name="kimera_vio_ros_node" pkg="kimera_vio_ros" type="kimera_vio_ros_node"
         output="screen" ns="kimera_vio_ros"
@@ -137,10 +143,10 @@ file and include this one to launch KimeraVIO on the dataset of your choice -->
         args="--use_lcd=$(arg use_lcd)
               --vocabulary_path=$(arg path_to_vocab)
               $(arg pipeline_flag_args)
-              --flagfile=$(arg flags_folder)/Mesher.flags
+              $(arg mesher_flag_args)
               --flagfile=$(arg flags_folder)/VioBackend.flags
               --flagfile=$(arg flags_folder)/RegularVioBackend.flags
-              --flagfile=$(arg flags_folder)/Visualizer3D.flags
+              $(arg visualizer_flag_args)
               --use_external_odometry=$(arg use_external_odom)
               --do_coarse_imu_camera_temporal_sync=$(arg do_coarse_temporal_sync)
               --do_fine_imu_camera_temporal_sync=$(arg do_fine_temporal_sync)
