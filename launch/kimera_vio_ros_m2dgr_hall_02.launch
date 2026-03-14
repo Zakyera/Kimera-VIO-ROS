@@ -10,7 +10,7 @@
   <!-- Bag publishes /clock -->
   <arg name="online" default="true"/>
   <arg name="should_use_sim_time" default="true"/>
-
+  
   <!-- M2DGR hall_02 topics (bag contains *CompressedImage) -->
   <arg name="left_cam_topic"  default="/camera/left/image_raw"/>
   <arg name="right_cam_topic" default="/camera/right/image_raw"/>
