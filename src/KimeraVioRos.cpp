@@ -39,6 +39,24 @@
 #include "kimera_vio_ros/RosOnlineDataProvider.h"
 #include "kimera_vio_ros/utils/UtilsRos.h"
 
+#ifdef KIMERA_USE_CBS
+DECLARE_bool(use_cbs_optimizer);
+DECLARE_bool(cbs_replace_fixed_lag_optimizer);
+#endif
+
+namespace {
+inline bool isCbsBeliefExchangeEnabled() {
+#ifdef KIMERA_USE_CBS
+  // zy Step 41e
+  // CBS mode now means belief exchange is enabled while Kimera keeps fixed-lag
+  // optimization as the only backend heart.
+  return FLAGS_use_cbs_optimizer;
+#else
+  return false;
+#endif
+}
+}  // namespace
+
 namespace VIO {
 
 #define MAKE_CONFIG_FILEPATH(dir_to_use, config_name) \
@@ -68,6 +86,11 @@ KimeraVioRos::KimeraVioRos()
   nh_private_.param<bool>("enable_external_pose_bridge",
                           enable_external_pose_bridge_,
                           false);
+  if (enable_external_pose_bridge_ && !isCbsBeliefExchangeEnabled()) {
+    LOG(WARNING) << "enable_external_pose_bridge=true but CBS heart is OFF. "
+                    "Forcing bridge OFF to keep strict two-mode behavior.";
+    enable_external_pose_bridge_ = false;
+  }
   // zy Step 4_c
   // Uses LIORF-compatible topic when no ROS param override is provided.
   nh_private_.param<std::string>("external_pose_belief_topic",

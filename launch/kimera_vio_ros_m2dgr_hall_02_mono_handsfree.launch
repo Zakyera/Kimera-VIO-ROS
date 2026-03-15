@@ -1,59 +1,43 @@
-<!-- M2DGR hall_02 launch wrapper for Kimera-VIO.
-     Default profile is MONO D435i (the validated stable baseline in this repo).
--->
+<!-- M2DGR hall_02 MONO (D435i color + handsfree IMU) launch wrapper. -->
 <launch>
-  <!-- Dataset params folder name under kimera_vio/params -->
-  <arg name="dataset_name" default="M2DGR_hall_02_mono_d435i"/>
-  <!-- Optional override (mirrors GEODE usage) -->
+  <arg name="dataset_name" default="M2DGR_hall_02_mono_handsfree"/>
   <arg name="params_folder" default="$(find kimera_vio)/params/$(arg dataset_name)"/>
 
-  <!-- Bag publishes /clock -->
   <arg name="online" default="true"/>
   <arg name="should_use_sim_time" default="true"/>
-  
-  <!-- MONO D435i path:
-       /camera/color/image_raw is compressed-only in bag, so we republish below.
-       IMU is /camera/imu to keep camera+imu on the same sensor stack. -->
+
+  <!-- D435i color is compressed-only in bag: republish compressed->raw in this launch. -->
   <arg name="left_cam_topic"  default="/camera/color/image_raw"/>
   <arg name="right_cam_topic" default=""/>
-  <arg name="imu_topic"       default="/camera/imu"/>
+  <arg name="imu_topic"       default="/handsfree/imu"/>
 
-  <!-- We subscribe to raw image after republish. -->
   <arg name="rgb_image_transport" default="raw"/>
   <arg name="enable_color_republish" default="true"/>
 
-  <!-- Match GEODE-style commonly used knobs -->
   <arg name="multirobot" default="true"/>
   <arg name="use_lcd" default="false"/>
   <arg name="use_external_odom" default="false"/>
   <arg name="include_pipeline_flags" default="false"/>
   <arg name="no_incremental_pose" default="true"/>
 
-  <!-- Visualization (often disabled for benchmarks) -->
   <arg name="visualize" default="false"/>
   <arg name="use_rviz" default="false"/>
 
-  <!-- Logging -->
   <arg name="log_output" default="true"/>
-  <arg name="log_output_path" default="/tmp/ate/kimera_m2dgr_hall02/"/>
+  <arg name="log_output_path" default="/tmp/ate/kimera_m2dgr_mono_handsfree/"/>
 
-  <!-- Verbosity -->
   <arg name="verbosity" default="0"/>
   <arg name="minloglevel" default="0"/>
 
-  <!-- CBS external pose bridge (Kimera <-> LIORF).
-       Keep OFF by default for first baseline bring-up on a new dataset. -->
   <arg name="enable_external_pose_bridge" default="false"/>
   <arg name="external_pose_belief_topic" default="/liorf/cbs/external_pose_prior"/>
   <arg name="external_pose_prior_topic" default="/liorf/cbs/external_pose_belief"/>
   <arg name="external_prior_default_source" default="liorf"/>
 
-  <!-- Optionally tune frames -->
   <arg name="odom_frame_id" default="odom"/>
   <arg name="base_link_frame_id" default="base_link"/>
   <arg name="map_frame_id" default="map"/>
 
-  <!-- Convert compressed color stream -> raw for Kimera input -->
   <node if="$(arg enable_color_republish)"
         pkg="image_transport"
         type="republish"
@@ -64,7 +48,6 @@
 
   <include file="$(find kimera_vio_ros)/launch/kimera_vio_ros.launch">
     <arg name="multirobot" value="$(arg multirobot)"/>
-
     <arg name="dataset_name" value="$(arg dataset_name)"/>
     <arg name="params_folder" value="$(arg params_folder)"/>
 
