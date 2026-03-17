@@ -1,0 +1,20 @@
+<launch>
+  <arg name="enable_external_pose_bridge" default="false"/>
+  <arg name="log_output" default="true"/>
+  <arg name="log_output_path" default="/tmp/ate/kimera_geode_offroad7_mono_tuned/"/>
+  <arg name="visualize" default="false"/>
+  <arg name="use_rviz" default="false"/>
+  <arg name="do_coarse_temporal_sync" default="true"/>
+  <arg name="do_fine_temporal_sync" default="false"/>
+
+  <include file="$(find kimera_vio_ros)/launch/kimera_vio_ros_geode_beta_mono.launch">
+    <arg name="dataset_name" value="GEODE_offroad7_mono_cbs_off_tuned"/>
+    <arg name="enable_external_pose_bridge" value="$(arg enable_external_pose_bridge)"/>
+    <arg name="do_coarse_temporal_sync" value="$(arg do_coarse_temporal_sync)"/>
+    <arg name="do_fine_temporal_sync" value="$(arg do_fine_temporal_sync)"/>
+    <arg name="log_output" value="$(arg log_output)"/>
+    <arg name="log_output_path" value="$(arg log_output_path)"/>
+    <arg name="visualize" value="$(arg visualize)"/>
+    <arg name="use_rviz" value="$(arg use_rviz)"/>
+  </include>
+</launch>
