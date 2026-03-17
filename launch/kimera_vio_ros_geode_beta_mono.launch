@@ -1,0 +1,82 @@
+<!-- GEODE beta monocular launch wrapper for Kimera-VIO. -->
+<launch>
+  <arg name="dataset_name" default="GEODE_beta_mono"/>
+  <arg name="params_folder" default="$(find kimera_vio)/params/$(arg dataset_name)"/>
+
+  <arg name="online" default="true"/>
+  <arg name="should_use_sim_time" default="true"/>
+
+  <arg name="left_cam_topic" default="/left_camera/image"/>
+  <arg name="right_cam_topic" default=""/>
+  <arg name="imu_topic" default="/imu/data"/>
+  <arg name="rgb_image_transport" default="compressed"/>
+
+  <arg name="do_coarse_temporal_sync" default="true"/>
+  <arg name="do_fine_temporal_sync" default="false"/>
+
+  <arg name="multirobot" default="true"/>
+  <arg name="use_lcd" default="false"/>
+  <arg name="use_external_odom" default="false"/>
+  <arg name="include_pipeline_flags" default="false"/>
+  <arg name="no_incremental_pose" default="true"/>
+  <arg name="force_same_image_timestamp" default="true"/>
+
+  <arg name="visualize" default="false"/>
+  <arg name="use_rviz" default="false"/>
+
+  <arg name="log_output" default="true"/>
+  <arg name="log_output_path" default="/tmp/ate/kimera_geode_beta_mono/"/>
+
+  <arg name="verbosity" default="0"/>
+  <arg name="minloglevel" default="0"/>
+
+  <arg name="enable_external_pose_bridge" default="false"/>
+  <arg name="external_pose_belief_topic" default="/liorf/cbs/external_pose_prior"/>
+  <arg name="external_pose_prior_topic" default="/liorf/cbs/external_pose_belief"/>
+  <arg name="external_prior_default_source" default="liorf"/>
+
+  <arg name="odom_frame_id" default="odom"/>
+  <arg name="base_link_frame_id" default="base_link"/>
+  <arg name="map_frame_id" default="map"/>
+
+  <include file="$(find kimera_vio_ros)/launch/kimera_vio_ros.launch">
+    <arg name="multirobot" value="$(arg multirobot)"/>
+    <arg name="dataset_name" value="$(arg dataset_name)"/>
+    <arg name="params_folder" value="$(arg params_folder)"/>
+
+    <arg name="online" value="$(arg online)"/>
+    <arg name="should_use_sim_time" value="$(arg should_use_sim_time)"/>
+    <arg name="force_same_image_timestamp" value="$(arg force_same_image_timestamp)"/>
+
+    <arg name="left_cam_topic" value="$(arg left_cam_topic)"/>
+    <arg name="right_cam_topic" value="$(arg right_cam_topic)"/>
+    <arg name="imu_topic" value="$(arg imu_topic)"/>
+    <arg name="rgb_image_transport" value="$(arg rgb_image_transport)"/>
+
+    <arg name="do_coarse_temporal_sync" value="$(arg do_coarse_temporal_sync)"/>
+    <arg name="do_fine_temporal_sync" value="$(arg do_fine_temporal_sync)"/>
+
+    <arg name="use_lcd" value="$(arg use_lcd)"/>
+    <arg name="use_external_odom" value="$(arg use_external_odom)"/>
+    <arg name="enable_external_pose_bridge" value="$(arg enable_external_pose_bridge)"/>
+    <arg name="external_pose_belief_topic" value="$(arg external_pose_belief_topic)"/>
+    <arg name="external_pose_prior_topic" value="$(arg external_pose_prior_topic)"/>
+    <arg name="external_prior_default_source" value="$(arg external_prior_default_source)"/>
+
+    <arg name="include_pipeline_flags" value="$(arg include_pipeline_flags)"/>
+    <arg name="no_incremental_pose" value="$(arg no_incremental_pose)"/>
+
+    <arg name="visualize" value="$(arg visualize)"/>
+    <arg name="use_rviz" value="$(arg use_rviz)"/>
+
+    <arg name="log_output" value="$(arg log_output)"/>
+    <arg name="log_output_path" value="$(arg log_output_path)"/>
+
+    <arg name="verbosity" value="$(arg verbosity)"/>
+    <arg name="minloglevel" value="$(arg minloglevel)"/>
+
+    <arg name="odom_frame_id" value="$(arg odom_frame_id)"/>
+    <arg name="base_link_frame_id" value="$(arg base_link_frame_id)"/>
+    <arg name="map_frame_id" value="$(arg map_frame_id)"/>
+  </include>
+</launch>
