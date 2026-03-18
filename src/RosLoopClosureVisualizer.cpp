@@ -95,7 +95,11 @@ void RosLoopClosureVisualizer::publishLcdOutput(
   }
 
   publishTf(lcd_output);
-  if (trajectory_pub_.getNumSubscribers() > 0) {
+  // Publish optimized outputs if either path or odometry is being consumed.
+  // Previously this was gated only by trajectory subscribers, which could
+  // suppress optimized_odometry publication unexpectedly.
+  if (trajectory_pub_.getNumSubscribers() > 0 ||
+      odometry_pub_.getNumSubscribers() > 0) {
     publishOptimizedTrajectory(lcd_output);
   }
   if (posegraph_pub_.getNumSubscribers() > 0 ||
