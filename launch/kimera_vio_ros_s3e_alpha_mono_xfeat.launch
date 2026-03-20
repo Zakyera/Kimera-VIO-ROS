@@ -11,6 +11,7 @@
   <arg name="left_cam_topic" default="/Alpha/left_camera"/>
   <arg name="right_cam_topic" default=""/>
   <arg name="imu_topic" default="/Alpha/imu/data"/>
+  <arg name="external_odom_topic" default=""/>
   <arg name="rgb_image_transport" default="compressed"/>
 
   <arg name="do_coarse_temporal_sync" default="true"/>
@@ -53,6 +54,7 @@
     <arg name="left_cam_topic" value="$(arg left_cam_topic)"/>
     <arg name="right_cam_topic" value="$(arg right_cam_topic)"/>
     <arg name="imu_topic" value="$(arg imu_topic)"/>
+    <arg name="external_odom_topic" value="$(arg external_odom_topic)"/>
     <arg name="rgb_image_transport" value="$(arg rgb_image_transport)"/>
 
     <arg name="do_coarse_temporal_sync" value="$(arg do_coarse_temporal_sync)"/>
