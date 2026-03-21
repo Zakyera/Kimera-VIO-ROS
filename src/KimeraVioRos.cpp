@@ -394,6 +394,26 @@ void KimeraVioRos::publishExternalPoseBelief(
     }
   }
 
+  const gtsam::Pose3& pose = belief.W_Pose_B_;
+  const gtsam::Quaternion pose_q = pose.rotation().toQuaternion();
+  LOG(INFO) << "[CBS][OutgoingBeliefMean]"
+            << " source=kimera"
+            << " frame_id=" << belief.frame_id_
+            << " timestamp_ns=" << belief.timestamp_kf_nsec_
+            << " msg_frame_id=" << msg.header.frame_id
+            << " msg_child_frame_id=" << msg.child_frame_id
+            << " sender_mean_semantic=world_to_body_pose"
+            << " sender_exchange_frame_semantic=world_to_body_pose"
+            << " sender_exchange_frame_mode=body"
+            << " sender_extrinsic_applied_to_mean=0"
+            << " mean_tx=" << pose.x()
+            << " mean_ty=" << pose.y()
+            << " mean_tz=" << pose.z()
+            << " mean_qx=" << pose_q.x()
+            << " mean_qy=" << pose_q.y()
+            << " mean_qz=" << pose_q.z()
+            << " mean_qw=" << pose_q.w();
+
   pub_external_pose_belief_.publish(msg);
 }
 
