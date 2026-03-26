@@ -13,6 +13,9 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <limits>
+#include <Eigen/Cholesky>
+#include <Eigen/Eigenvalues>
 #include "kimera_vio_ros/utils/UtilsRos.h"
 
 
@@ -435,13 +438,112 @@ void KimeraVioRos::externalPosePriorCallback(
   VIO::utils::rosOdometryToGtsamPose(*msg, &W_Pose_B);
 
   gtsam::Matrix6 covariance = gtsam::Matrix6::Zero();
+  Eigen::Matrix<double, 6, 6, Eigen::RowMajor> covariance_ros_layout =
+      Eigen::Matrix<double, 6, 6, Eigen::RowMajor>::Zero();
   static const int remap[6] = {3, 4, 5, 0, 1, 2};
-  for (int i = 0; i < 6; i++) {
-    for (int j = 0; j < 6; j++) {
+  for (int i = 0; i < 6; ++i) {
+    for (int j = 0; j < 6; ++j) {
+      covariance_ros_layout(i, j) = msg->pose.covariance[i * 6 + j];
       covariance(i, j) = msg->pose.covariance[remap[i] * 6 + remap[j]];
     }
   }
   covariance = 0.5 * (covariance + covariance.transpose());
+
+  const auto covarianceLogdet = [](const Eigen::Matrix<double, 6, 6>& cov) {
+    Eigen::LLT<Eigen::Matrix<double, 6, 6>> llt(cov);
+    if (llt.info() != Eigen::Success) {
+      return std::numeric_limits<double>::quiet_NaN();
+    }
+    const auto& L = llt.matrixL();
+    double sum_log_diag = 0.0;
+    for (int i = 0; i < 6; ++i) {
+      const double d = L(i, i);
+      if (!(d > 0.0) || !std::isfinite(d)) {
+        return std::numeric_limits<double>::quiet_NaN();
+      }
+      sum_log_diag += std::log(d);
+    }
+    return 2.0 * sum_log_diag;
+  };
+  const auto covarianceLambdaMin = [](const Eigen::Matrix<double, 6, 6>& cov) {
+    Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, 6, 6>> eig(cov);
+    if (eig.info() != Eigen::Success) {
+      return std::numeric_limits<double>::quiet_NaN();
+    }
+    return eig.eigenvalues().minCoeff();
+  };
+  const auto safeRatio = [](const double num, const double den) {
+    if (std::isfinite(num) && std::isfinite(den) && den > 0.0) {
+      return num / den;
+    }
+    return std::numeric_limits<double>::quiet_NaN();
+  };
+
+  const Eigen::Matrix<double, 6, 6> covariance_reordered = covariance;
+  const Eigen::Matrix<double, 6, 6> covariance_converted = covariance_reordered;
+  const double raw_trace = covariance_reordered.trace();
+  const double raw_logdet = covarianceLogdet(covariance_reordered);
+  const double raw_lambda_min = covarianceLambdaMin(covariance_reordered);
+  const double converted_trace = covariance_converted.trace();
+  const double converted_logdet = covarianceLogdet(covariance_converted);
+  const double converted_lambda_min = covarianceLambdaMin(covariance_converted);
+  const double converted_over_raw_trace_ratio =
+      safeRatio(converted_trace, raw_trace);
+  const double converted_over_raw_lambda_min_ratio =
+      safeRatio(converted_lambda_min, raw_lambda_min);
+  const double converted_minus_raw_logdet_delta =
+      (std::isfinite(converted_logdet) && std::isfinite(raw_logdet))
+          ? (converted_logdet - raw_logdet)
+          : std::numeric_limits<double>::quiet_NaN();
+  const gtsam::Quaternion incoming_q_raw = W_Pose_B.rotation().toQuaternion();
+  LOG(INFO) << "[CBS][IncomingPriorCov]"
+            << " source=" << normalizeExternalSourceTag(msg->child_frame_id)
+            << " source_seq=" << msg->header.seq
+            << " timestamp_ns=" << ts_nsec
+            << " msg_frame_id=" << msg->header.frame_id
+            << " msg_child_frame_id=" << msg->child_frame_id
+            << " raw_ros_trace=" << covariance_ros_layout.trace()
+            << " raw_ros_logdet=" << covarianceLogdet(covariance_ros_layout)
+            << " raw_ros_lambda_min=" << covarianceLambdaMin(covariance_ros_layout)
+            << " incoming_raw_mean_semantic=world_to_body_pose"
+            << " incoming_raw_mean_tx=" << W_Pose_B.x()
+            << " incoming_raw_mean_ty=" << W_Pose_B.y()
+            << " incoming_raw_mean_tz=" << W_Pose_B.z()
+            << " incoming_raw_mean_qx=" << incoming_q_raw.x()
+            << " incoming_raw_mean_qy=" << incoming_q_raw.y()
+            << " incoming_raw_mean_qz=" << incoming_q_raw.z()
+            << " incoming_raw_mean_qw=" << incoming_q_raw.w()
+            << " raw_trace=" << raw_trace
+            << " raw_logdet=" << raw_logdet
+            << " raw_lambda_min=" << raw_lambda_min
+            << " reordered_trace=" << raw_trace
+            << " reordered_logdet=" << raw_logdet
+            << " reordered_lambda_min=" << raw_lambda_min
+            << " converted_trace=" << converted_trace
+            << " converted_logdet=" << converted_logdet
+            << " converted_lambda_min=" << converted_lambda_min
+            << " converted_over_raw_trace_ratio="
+            << converted_over_raw_trace_ratio
+            << " converted_over_raw_lambda_min_ratio="
+            << converted_over_raw_lambda_min_ratio
+            << " converted_minus_raw_logdet_delta="
+            << converted_minus_raw_logdet_delta
+            << " incoming_converted_mean_semantic=world_to_body_pose"
+            << " incoming_converted_mean_tx=" << W_Pose_B.x()
+            << " incoming_converted_mean_ty=" << W_Pose_B.y()
+            << " incoming_converted_mean_tz=" << W_Pose_B.z()
+            << " incoming_converted_mean_qx=" << incoming_q_raw.x()
+            << " incoming_converted_mean_qy=" << incoming_q_raw.y()
+            << " incoming_converted_mean_qz=" << incoming_q_raw.z()
+            << " incoming_converted_mean_qw=" << incoming_q_raw.w()
+            << " body_frame_conversion_applied=0"
+            << " ext_rot_inverse_applied=0"
+            << " cbs_diag_force_identity_exchange_to_lidar=1"
+            << " exchange_to_lidar_conversion_skipped=1"
+            << " exchange_frame_mode=body"
+            << " covariance_transport_mode=reorder_only_identity_exchange_to_lidar"
+            << " exchange_rot_mode=none"
+            << " covariance_reorder_applied=1";
 
   std::string source = normalizeExternalSourceTag(msg->child_frame_id);
   if (source == "unknown") {
