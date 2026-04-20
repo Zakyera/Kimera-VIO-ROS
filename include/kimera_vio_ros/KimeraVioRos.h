@@ -9,6 +9,7 @@
 // zy Step 1_a
 // Adds message and string types needed by the Kimera-LIORF external pose bridge.
 #include <nav_msgs/Odometry.h>
+#include <std_msgs/Int64MultiArray.h>
 #include <string>
 #include <atomic>
 #include <cstdint>
@@ -54,6 +55,9 @@ class KimeraVioRos {
   // Receives external ROS prior and forwards it to Kimera backend prior queue.
   void externalPosePriorCallback(const nav_msgs::Odometry::ConstPtr& msg);
 
+  // Publishes receiver pacing watermark used by external sender flow-control.
+  void publishExternalPriorReceiverWatermark(const ros::TimerEvent& event);
+
   // zy Step 2_c
   // Normalizes source tags to stable lowercase names for source filtering/mapping.
   std::string normalizeExternalSourceTag(const std::string& source) const;
@@ -84,9 +88,14 @@ class KimeraVioRos {
   std::string external_pose_belief_source_ = "kimera";
   std::string external_prior_default_source_ = "liorf";
   std::string external_exchange_frame_id_ = "odom";
+  bool enable_external_receiver_watermark_ = true;
+  std::string external_receiver_watermark_topic_ = "/kimera/cbs/receiver_watermark";
+  double external_receiver_watermark_period_sec_ = 0.1;
   uint32_t external_pose_belief_seq_counter_ = 0;
   ros::Publisher pub_external_pose_belief_;
+  ros::Publisher pub_external_receiver_watermark_;
   ros::Subscriber sub_external_pose_prior_;
+  ros::Timer external_receiver_watermark_timer_;
 
 
   //! VIO

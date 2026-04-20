@@ -14,6 +14,7 @@
 #include <cctype>
 #include <cmath>
 #include <limits>
+#include <vector>
 #include <Eigen/Cholesky>
 #include <Eigen/Eigenvalues>
 #include "kimera_vio_ros/utils/UtilsRos.h"
@@ -112,6 +113,18 @@ KimeraVioRos::KimeraVioRos()
   nh_private_.param<std::string>("external_prior_default_source",
                                  external_prior_default_source_,
                                  "liorf");
+  nh_private_.param<bool>("enable_external_receiver_watermark",
+                          enable_external_receiver_watermark_,
+                          true);
+  nh_private_.param<std::string>("external_receiver_watermark_topic",
+                                 external_receiver_watermark_topic_,
+                                 "/kimera/cbs/receiver_watermark");
+  nh_private_.param<double>("external_receiver_watermark_period_sec",
+                            external_receiver_watermark_period_sec_,
+                            0.1);
+  if (!(external_receiver_watermark_period_sec_ > 0.0)) {
+    external_receiver_watermark_period_sec_ = 0.1;
+  }
 
   std::string odom_frame_id = "odom";
   nh_private_.param<std::string>("odom_frame_id", odom_frame_id, "odom");
@@ -124,7 +137,13 @@ KimeraVioRos::KimeraVioRos()
             << ", belief_topic=" << external_pose_belief_topic_
             << ", prior_topic=" << external_pose_prior_topic_
             << ", source=" << external_pose_belief_source_
-            << ", frame_id=" << external_exchange_frame_id_;
+            << ", frame_id=" << external_exchange_frame_id_
+            << ", receiver_watermark_enabled="
+            << (enable_external_receiver_watermark_ ? 1 : 0)
+            << ", receiver_watermark_topic="
+            << external_receiver_watermark_topic_
+            << ", receiver_watermark_period_sec="
+            << external_receiver_watermark_period_sec_;
 
 
   // Parse VIO parameters
@@ -559,6 +578,41 @@ void KimeraVioRos::externalPosePriorCallback(
   }
 }
 
+void KimeraVioRos::publishExternalPriorReceiverWatermark(
+    const ros::TimerEvent& /*event*/) {
+  if (!enable_external_pose_bridge_ || !enable_external_receiver_watermark_) {
+    return;
+  }
+  if (!vio_pipeline_) {
+    return;
+  }
+
+  VioBackend::ExternalPriorReceiverWatermark watermark;
+  if (!vio_pipeline_->getExternalPriorReceiverWatermark(&watermark)) {
+    return;
+  }
+
+  std_msgs::Int64MultiArray msg;
+  msg.data.reserve(9);
+  msg.data.push_back(
+      static_cast<int64_t>(watermark.emitted_at_backend_timestamp_ns_));
+  msg.data.push_back(
+      static_cast<int64_t>(watermark.oldest_active_pose_timestamp_ns_));
+  msg.data.push_back(
+      static_cast<int64_t>(watermark.newest_active_pose_timestamp_ns_));
+  msg.data.push_back(
+      static_cast<int64_t>(watermark.recommended_sender_min_timestamp_ns_));
+  msg.data.push_back(
+      static_cast<int64_t>(watermark.recommended_sender_max_timestamp_ns_));
+  msg.data.push_back(
+      static_cast<int64_t>(watermark.recommended_sender_max_future_lead_ns_));
+  msg.data.push_back(static_cast<int64_t>(watermark.ready_queue_size_));
+  msg.data.push_back(static_cast<int64_t>(watermark.future_reservoir_size_));
+  msg.data.push_back(static_cast<int64_t>(watermark.total_buffered_priors_));
+
+  pub_external_receiver_watermark_.publish(msg);
+}
+
 
 
 void KimeraVioRos::connectVIO() {
@@ -607,6 +661,15 @@ void KimeraVioRos::connectVIO() {
   if (enable_external_pose_bridge_) {
     pub_external_pose_belief_ =
         nh_private_.advertise<nav_msgs::Odometry>(external_pose_belief_topic_, 20);
+    if (enable_external_receiver_watermark_) {
+      pub_external_receiver_watermark_ =
+          nh_private_.advertise<std_msgs::Int64MultiArray>(
+              external_receiver_watermark_topic_, 20);
+      external_receiver_watermark_timer_ = nh_private_.createTimer(
+          ros::Duration(external_receiver_watermark_period_sec_),
+          &KimeraVioRos::publishExternalPriorReceiverWatermark,
+          this);
+    }
     sub_external_pose_prior_ = nh_private_.subscribe<nav_msgs::Odometry>(
         external_pose_prior_topic_,
         200,
@@ -620,7 +683,11 @@ void KimeraVioRos::connectVIO() {
 
     LOG(INFO) << "External pose bridge connected. publish_topic="
               << external_pose_belief_topic_
-              << ", subscribe_topic=" << external_pose_prior_topic_;
+              << ", subscribe_topic=" << external_pose_prior_topic_
+              << ", receiver_watermark_topic="
+              << external_receiver_watermark_topic_
+              << ", receiver_watermark_enabled="
+              << (enable_external_receiver_watermark_ ? 1 : 0);
   }
 
 
