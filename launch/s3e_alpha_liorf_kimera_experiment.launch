@@ -12,13 +12,17 @@
   <arg name="enable_cbs_bridge" default="true"/>
   <arg name="liorf_belief_timestamp_tolerance_sec" default="0.12"/>
   <arg name="kimera_belief_timestamp_tolerance_sec" default="0.2"/>
+  <arg name="kimera_l2k_receiver_covariance_scale" default="1.0"/>
+  <arg name="kimera_cbs_l2k_enable_soft_reset" default="false"/>
   <arg name="liorf_belief_reject_first_message" default="true"/>
+  <arg name="liorf_cbs_enable_soft_reset" default="false"/>
   <arg name="liorf_belief_exchange_window_size" default="30"/>
   <arg name="liorf_cbs_l2k_cov_audit_enable" default="false"/>
   <arg name="liorf_cbs_l2k_cov_audit_max_samples" default="20"/>
   <arg name="liorf_cbs_l2k_cov_audit_replacement_trans_variance" default="1.0"/>
   <arg name="liorf_cbs_l2k_cov_audit_query_anchor_variance" default="1000000.0"/>
   <arg name="liorf_cbs_l2k_outgoing_covariance_mode" default="A_as_is_local_anchored"/>
+  <arg name="liorf_imu_preint_use_rotational_pose_extrinsic" default="false"/>
   <arg name="cbs_use_bpsam_for_local_belief_covariance" default="false"/>
   <arg name="cbs_use_persistent_bpsam_sidecar_for_belief_covariance"
        default="false"/>
@@ -34,6 +38,8 @@
          value="$(arg liorf_belief_timestamp_tolerance_sec)"/>
     <arg name="cbs_belief_reject_first_message"
          value="$(arg liorf_belief_reject_first_message)"/>
+    <arg name="cbs_enable_soft_reset"
+         value="$(arg liorf_cbs_enable_soft_reset)"/>
     <arg name="cbs_belief_exchange_window_size"
          value="$(arg liorf_belief_exchange_window_size)"/>
     <arg name="cbs_l2k_cov_audit_enable"
@@ -46,6 +52,8 @@
          value="$(arg liorf_cbs_l2k_cov_audit_query_anchor_variance)"/>
     <arg name="cbs_l2k_outgoing_covariance_mode"
          value="$(arg liorf_cbs_l2k_outgoing_covariance_mode)"/>
+    <arg name="imu_preint_use_rotational_pose_extrinsic"
+         value="$(arg liorf_imu_preint_use_rotational_pose_extrinsic)"/>
   </include>
 
   <include file="$(find kimera_vio_ros)/launch/kimera_vio_ros_s3e_alpha_mono.launch">
@@ -58,6 +66,10 @@
     <arg name="cbs_belief_out_topic" value="/kimera/cbs/belief_out"/>
     <arg name="cbs_external_belief_timestamp_tolerance_sec"
          value="$(arg kimera_belief_timestamp_tolerance_sec)"/>
+    <arg name="cbs_l2k_receiver_covariance_scale"
+         value="$(arg kimera_l2k_receiver_covariance_scale)"/>
+    <arg name="cbs_l2k_enable_soft_reset"
+         value="$(arg kimera_cbs_l2k_enable_soft_reset)"/>
     <arg name="cbs_use_bpsam_for_local_belief_covariance"
          value="$(arg cbs_use_bpsam_for_local_belief_covariance)"/>
     <arg name="cbs_use_persistent_bpsam_sidecar_for_belief_covariance"

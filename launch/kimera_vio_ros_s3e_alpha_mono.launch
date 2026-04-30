@@ -42,6 +42,8 @@
   <arg name="cbs_belief_out_topic" default="/kimera/cbs/belief_out"/>
   <arg name="cbs_belief_forward_queue_limit" default="800"/>
   <arg name="cbs_external_belief_timestamp_tolerance_sec" default="0.2"/>
+  <arg name="cbs_l2k_receiver_covariance_scale" default="1.0"/>
+  <arg name="cbs_l2k_enable_soft_reset" default="false"/>
   <arg name="cbs_external_pose_frame_id" default="imu_link"/>
   <arg name="cbs_use_bpsam_for_local_belief_covariance" default="false"/>
   <arg name="cbs_use_persistent_bpsam_sidecar_for_belief_covariance"
