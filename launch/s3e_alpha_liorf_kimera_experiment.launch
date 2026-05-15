@@ -5,7 +5,7 @@
   <arg name="bag_rate" default="1.0"/>
   <arg name="bag_start" default="0.0"/>
   <arg name="bag_duration" default="60.0"/>
-  <arg name="shutdown_on_bag_finish" default="true"/>
+  <arg name="shutdown_on_bag_finish" default="false"/>
   <arg name="rerun_visualizer_enable" default="true"/>
   <arg name="rerun_recording_id" default=""/>
   <arg name="rerun_host" default="rerun+http://172.18.0.1:9876/proxy"/>
@@ -14,13 +14,16 @@
   <arg name="liorf_rerun_local_map_leaf_size" default="1.0"/>
   <arg name="liorf_rerun_local_map_max_points" default="10000"/>
   <arg name="liorf_use_gps" default="false"/>
+  <arg name="liorf_initial_yaw_sigma" default="3.141592653589793"/>
 
   <arg name="use_kimera_rviz" default="true"/>
   <arg name="use_liorf_rviz" default="false"/>
   <arg name="kimera_visualize" default="true"/>
+  <arg name="kimera_node_output" default="log"/>
   <arg name="kimera_params_folder"
        default="$(find kimera_vio)/params/S3EAlphaMonoXfeat"/>
   <arg name="enable_cbs_bridge" default="true"/>
+  <arg name="cbs_belief_receive_start_delay_sec" default="0.0"/>
   <arg name="liorf_belief_timestamp_tolerance_sec" default="0.12"/>
   <arg name="kimera_belief_timestamp_tolerance_sec" default="0.2"/>
   <arg name="liorf_belief_reject_first_message" default="true"/>
@@ -35,6 +38,7 @@
   <arg name="cbs_d_reset" default="0.1"/>
   <arg name="kimera_cbs_l2k_odom_factor_covariance_scale" default="1.0"/>
   <arg name="liorf_cbs_k2l_odom_factor_covariance_scale" default="1.0"/>
+  <arg name="liorf_cbs_k2l_debug_visualization_enable" default="false"/>
   <arg name="liorf_belief_exchange_window_size" default="30"/>
   <arg name="cbs_odom_unmatched_retry_max_age_sec" default="5.0"/>
   <arg name="cbs_odom_unmatched_retry_max_beliefs" default="500"/>
@@ -67,6 +71,7 @@
 
   <include file="$(find liorf)/launch/run_lio_sam_s3e_alpha.launch">
     <arg name="use_rviz" value="$(arg use_liorf_rviz)"/>
+    <arg name="initial_yaw_sigma" value="$(arg liorf_initial_yaw_sigma)"/>
     <arg name="rerun_visualizer_enable"
          value="$(arg rerun_visualizer_enable)"/>
     <arg name="rerun_recording_id" value="$(arg rerun_recording_id)"/>
@@ -98,7 +103,11 @@
     <arg name="cbs_d_reset" value="$(arg cbs_d_reset)"/>
     <arg name="cbs_k2l_odom_factor_covariance_scale"
          value="$(arg liorf_cbs_k2l_odom_factor_covariance_scale)"/>
+    <arg name="cbs_k2l_debug_visualization_enable"
+         value="$(arg liorf_cbs_k2l_debug_visualization_enable)"/>
     <arg name="cbs_belief_bridge_enable" value="$(arg enable_cbs_bridge)"/>
+    <arg name="cbs_belief_receive_start_delay_sec"
+         value="$(arg cbs_belief_receive_start_delay_sec)"/>
     <arg name="cbs_odom_belief_in_topic"
          value="$(arg liorf_cbs_odom_belief_in_topic)"/>
     <arg name="cbs_odom_belief_out_topic"
@@ -131,6 +140,7 @@
     <arg name="params_folder" value="$(arg kimera_params_folder)"/>
     <arg name="use_rviz" value="$(arg use_kimera_rviz)"/>
     <arg name="visualize" value="$(arg kimera_visualize)"/>
+    <arg name="node_output" value="$(arg kimera_node_output)"/>
     <arg name="rerun_visualizer_enable"
          value="$(arg rerun_visualizer_enable)"/>
     <arg name="rerun_recording_id" value="$(arg rerun_recording_id)"/>
@@ -140,6 +150,8 @@
     <arg name="rerun_world_alignment_enable"
          value="$(arg rerun_world_alignment_enable)"/>
     <arg name="cbs_belief_bridge_enable" value="$(arg enable_cbs_bridge)"/>
+    <arg name="cbs_belief_receive_start_delay_sec"
+         value="$(arg cbs_belief_receive_start_delay_sec)"/>
     <arg name="cbs_odom_belief_in_topic"
          value="$(arg kimera_cbs_odom_belief_in_topic)"/>
     <arg name="cbs_odom_belief_out_topic"

@@ -13,6 +13,7 @@
 #include <functional>
 #include <future>
 #include <fstream>
+#include <iomanip>
 #include <limits>
 #include <sstream>
 #include <string>
@@ -46,50 +47,87 @@ namespace VIO {
 
 namespace {
 
-gtsam::Matrix6 sanitizePoseCovariance(const gtsam::Matrix& state_covariance) {
-  gtsam::Matrix6 pose_cov = gtsam::Matrix6::Identity() * 1e-3;
-  if (state_covariance.rows() >= 6 && state_covariance.cols() >= 6) {
-    pose_cov = gtsam::sub(state_covariance, 0, 6, 0, 6);
-  }
-
-  pose_cov = 0.5 * (pose_cov + pose_cov.transpose());
-  for (size_t i = 0u; i < 6u; ++i) {
-    if (!std::isfinite(pose_cov(i, i)) || pose_cov(i, i) <= 1e-9) {
-      pose_cov(i, i) = 1e-3;
-    }
-  }
-  return pose_cov;
-}
-
 gtsam::Matrix6 poseCovarianceFromMatrix(const gtsam::Matrix& state_covariance) {
-  gtsam::Matrix6 pose_cov = gtsam::Matrix6::Identity() * 1e-3;
+  gtsam::Matrix6 pose_cov = gtsam::Matrix6::Zero();
   if (state_covariance.rows() >= 6 && state_covariance.cols() >= 6) {
     pose_cov = gtsam::sub(state_covariance, 0, 6, 0, 6);
   }
   return pose_cov;
 }
 
-Eigen::Matrix3d sanitizeTranslationCovariance(
+template <typename VisualizerT>
+void drawRawPoseCovariance6x6(VisualizerT* visualizer,
+                              const std::string& base_path,
+                              const gtsam::Matrix& source_covariance) {
+  if (!visualizer) {
+    return;
+  }
+
+  const bool has_6x6 =
+      source_covariance.rows() >= 6 && source_covariance.cols() >= 6;
+  visualizer->drawScalar(base_path + "/valid/has_6x6", has_6x6 ? 1.0 : 0.0);
+  if (!has_6x6) {
+    return;
+  }
+
+  const gtsam::Matrix6 pose_covariance =
+      gtsam::sub(source_covariance, 0, 6, 0, 6);
+  const char* labels[6] = {"rot_x",   "rot_y",   "rot_z",
+                           "trans_x", "trans_y", "trans_z"};
+
+  bool all_finite = true;
+  for (size_t row = 0u; row < 6u; ++row) {
+    for (size_t col = 0u; col < 6u; ++col) {
+      const double value = pose_covariance(row, col);
+      all_finite = all_finite && std::isfinite(value);
+      visualizer->drawScalar(base_path + "/matrix/" + labels[row] + "__" +
+                                 labels[col],
+                             value);
+    }
+    visualizer->drawScalar(base_path + "/diag/" + labels[row],
+                           pose_covariance(row, row));
+  }
+
+  const gtsam::Matrix6 symmetric_covariance =
+      0.5 * (pose_covariance + pose_covariance.transpose());
+  visualizer->drawScalar(base_path + "/valid/all_finite",
+                         all_finite ? 1.0 : 0.0);
+  visualizer->drawScalar(base_path + "/summary/trace",
+                         pose_covariance.trace());
+  visualizer->drawScalar(base_path + "/summary/frobenius_norm",
+                         pose_covariance.norm());
+  visualizer->drawScalar(base_path + "/summary/asymmetry_frobenius_norm",
+                         (pose_covariance - pose_covariance.transpose()).norm());
+  visualizer->drawScalar(base_path + "/block_norm/rotation_3x3",
+                         pose_covariance.block<3, 3>(0, 0).norm());
+  visualizer->drawScalar(base_path + "/block_norm/translation_3x3",
+                         pose_covariance.block<3, 3>(3, 3).norm());
+  visualizer->drawScalar(base_path + "/block_norm/rotation_translation_3x3",
+                         pose_covariance.block<3, 3>(0, 3).norm());
+
+  Eigen::SelfAdjointEigenSolver<gtsam::Matrix6> eig(symmetric_covariance);
+  if (eig.info() != Eigen::Success) {
+    visualizer->drawScalar(base_path + "/valid/eigen_success", 0.0);
+    return;
+  }
+  visualizer->drawScalar(base_path + "/valid/eigen_success", 1.0);
+  const gtsam::Vector6 eigenvalues = eig.eigenvalues();
+  for (size_t i = 0u; i < 6u; ++i) {
+    visualizer->drawScalar(base_path + "/eigenvalues/lambda_" +
+                               std::to_string(i),
+                           eigenvalues(i));
+  }
+  visualizer->drawScalar(base_path + "/eigenvalues/min", eigenvalues.minCoeff());
+  visualizer->drawScalar(base_path + "/eigenvalues/max", eigenvalues.maxCoeff());
+}
+
+Eigen::Matrix3d translationCovarianceFromPoseCovariance(
     const gtsam::Matrix& pose_covariance) {
-  Eigen::Matrix3d covariance = Eigen::Matrix3d::Identity() * 1e-3;
+  Eigen::Matrix3d covariance = Eigen::Matrix3d::Zero();
   if (pose_covariance.rows() >= 6 && pose_covariance.cols() >= 6) {
     covariance = pose_covariance.block<3, 3>(3, 3);
   }
-
-  covariance = 0.5 * (covariance + covariance.transpose());
-  if (!covariance.allFinite()) {
-    return Eigen::Matrix3d::Identity() * 1e-3;
-  }
-
-  Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> eig(covariance);
-  if (eig.info() != Eigen::Success) {
-    return Eigen::Matrix3d::Identity() * 1e-3;
-  }
-
-  const Eigen::Vector3d eigenvalues =
-      eig.eigenvalues().array().max(1e-9).matrix();
-  return eig.eigenvectors() * eigenvalues.asDiagonal() *
-         eig.eigenvectors().transpose();
+  return covariance;
 }
 
 std::string sanitizeCsvToken(std::string token) {
@@ -328,6 +366,16 @@ KimeraVioRos::KimeraVioRos()
   nh_private_.param<std::string>("cbs_odom_belief_out_topic",
                                  cbs_odom_belief_out_topic_,
                                  "kimera/cbs/odom_belief_out");
+  nh_private_.param<double>("cbs_belief_receive_start_delay_sec",
+                            cbs_belief_receive_start_delay_sec_,
+                            0.0);
+  if (!std::isfinite(cbs_belief_receive_start_delay_sec_) ||
+      cbs_belief_receive_start_delay_sec_ < 0.0) {
+    LOG(WARNING) << "Invalid cbs_belief_receive_start_delay_sec="
+                 << cbs_belief_receive_start_delay_sec_
+                 << "; falling back to 0.";
+    cbs_belief_receive_start_delay_sec_ = 0.0;
+  }
   nh_private_.param<std::string>("cbs_external_pose_frame_id",
                                  cbs_external_pose_frame_id_,
                                  base_link_frame_id_);
@@ -675,12 +723,23 @@ void KimeraVioRos::initializeHeadlessCbsBeliefBridge() {
           &KimeraVioRos::poseOdomBeliefInCallback,
           this,
           ros::TransportHints().tcpNoDelay());
+  if (cbs_belief_receive_start_delay_sec_ > 0.0) {
+    cbs_belief_receive_clock_sub_ =
+        nh.subscribe<rosgraph_msgs::Clock>(
+            "/clock",
+            10,
+            &KimeraVioRos::cbsBeliefReceiveClockCallback,
+            this,
+            ros::TransportHints().tcpNoDelay());
+  }
 
   LOG(INFO) << "Kimera headless belief bridge enabled. agent='"
             << static_cast<char>(cbs_agent_id_) << "', odom_in='"
             << cbs_odom_belief_in_topic_
             << "', odom_out='" << cbs_odom_belief_out_topic_
             << "', external_pose_frame='" << cbs_external_pose_frame_id_
+            << "', receive_start_delay_sec="
+            << cbs_belief_receive_start_delay_sec_
             << "'.";
 }
 
@@ -733,7 +792,7 @@ void KimeraVioRos::publishHeadlessOdometry(
     const gtsam::Quaternion& quaternion = rotation.toQuaternion();
     const gtsam::Vector3& velocity = output->W_State_Blkf_.velocity_;
     const gtsam::Matrix6 pose_cov =
-        sanitizePoseCovariance(output->state_covariance_lkf_);
+        poseCovarianceFromMatrix(output->state_covariance_lkf_);
     gtsam::Matrix3 vel_cov = gtsam::Matrix3::Identity() * 1e-3;
     if (output->state_covariance_lkf_.rows() >= 9 &&
         output->state_covariance_lkf_.cols() >= 9) {
@@ -796,7 +855,11 @@ void KimeraVioRos::publishHeadlessRerunBackendOutput(
     headless_rerun_visualizer_->drawTf("kimera/base_link", pose, 0.5f);
 
     const Eigen::Matrix3d current_pose_covariance =
-        sanitizeTranslationCovariance(output->state_covariance_lkf_);
+        translationCovarianceFromPoseCovariance(output->state_covariance_lkf_);
+    drawRawPoseCovariance6x6(
+        headless_rerun_visualizer_.get(),
+        "kimera/current_pose/raw_pose_covariance_6x6",
+        poseCovarianceFromMatrix(output->state_covariance_lkf_));
     headless_rerun_visualizer_->drawUncertainty(
         "kimera/current_pose/uncertainty",
         pose,
@@ -819,6 +882,10 @@ void KimeraVioRos::publishHeadlessRerunBackendOutput(
       headless_rerun_visualizer_->drawScalar(
           "kimera/cbs/beliefs/received_per_update",
           output->external_beliefs_received_per_update_);
+      headless_rerun_visualizer_->drawScalar(
+          "kimera/cbs/beliefs/dropped_by_receive_gate_per_update",
+          cbs_beliefs_receive_gate_dropped_per_rerun_frame_.exchange(
+              0u, std::memory_order_relaxed));
       headless_rerun_visualizer_->drawScalar(
           "kimera/cbs/beliefs/added_to_factor_graph_per_update",
           output->external_beliefs_added_per_update_);
@@ -957,6 +1024,95 @@ void KimeraVioRos::publishHeadlessOdometryBelief(
   }
 }
 
+double KimeraVioRos::incomingOdomBeliefGateStampSec(
+    const liorf::pose_odom_belief& belief) const {
+  const double to_stamp_sec = belief.to_stamp_sec > 0.0
+                                  ? belief.to_stamp_sec
+                                  : belief.header.stamp.toSec();
+  if (std::isfinite(to_stamp_sec) && to_stamp_sec > 0.0) {
+    return to_stamp_sec;
+  }
+  const double from_stamp_sec = belief.from_stamp_sec;
+  if (std::isfinite(from_stamp_sec) && from_stamp_sec > 0.0) {
+    return from_stamp_sec;
+  }
+  return std::numeric_limits<double>::quiet_NaN();
+}
+
+void KimeraVioRos::initializeIncomingOdomBeliefReceiveGate(
+    const liorf::pose_odom_belief_array& msg) {
+  if (cbs_belief_receive_start_delay_sec_ <= 0.0 ||
+      cbs_belief_receive_gate_reference_set_) {
+    return;
+  }
+
+  double earliest_stamp_sec = std::numeric_limits<double>::infinity();
+  for (const auto& belief : msg.beliefs) {
+    if (belief.source_agent == cbs_agent_id_) {
+      continue;
+    }
+    const double stamp_sec = incomingOdomBeliefGateStampSec(belief);
+    if (std::isfinite(stamp_sec) && stamp_sec > 0.0) {
+      earliest_stamp_sec = std::min(earliest_stamp_sec, stamp_sec);
+    }
+  }
+
+  if (!std::isfinite(earliest_stamp_sec)) {
+    return;
+  }
+
+  cbs_belief_receive_gate_reference_stamp_sec_ = earliest_stamp_sec;
+  cbs_belief_receive_gate_reference_set_ = true;
+  LOG(INFO) << "Kimera CBS incoming belief receive gate reference stamp="
+            << std::fixed << std::setprecision(9)
+            << cbs_belief_receive_gate_reference_stamp_sec_
+            << " from first incoming belief, accepting belief odometry with "
+            << "to_stamp >= "
+            << (cbs_belief_receive_gate_reference_stamp_sec_ +
+                cbs_belief_receive_start_delay_sec_)
+            << " (delay=" << cbs_belief_receive_start_delay_sec_ << " s).";
+}
+
+bool KimeraVioRos::isIncomingOdomBeliefBeforeReceiveGate(
+    const liorf::pose_odom_belief& belief) const {
+  if (cbs_belief_receive_start_delay_sec_ <= 0.0 ||
+      !cbs_belief_receive_gate_reference_set_) {
+    return false;
+  }
+
+  const double stamp_sec = incomingOdomBeliefGateStampSec(belief);
+  if (!std::isfinite(stamp_sec) || stamp_sec <= 0.0) {
+    return true;
+  }
+  return stamp_sec <
+         cbs_belief_receive_gate_reference_stamp_sec_ +
+             cbs_belief_receive_start_delay_sec_;
+}
+
+void KimeraVioRos::cbsBeliefReceiveClockCallback(
+    const rosgraph_msgs::ClockConstPtr& msg) {
+  if (!msg || cbs_belief_receive_start_delay_sec_ <= 0.0 ||
+      cbs_belief_receive_gate_reference_set_) {
+    return;
+  }
+
+  const double stamp_sec = msg->clock.toSec();
+  if (!std::isfinite(stamp_sec) || stamp_sec <= 0.0) {
+    return;
+  }
+
+  cbs_belief_receive_gate_reference_stamp_sec_ = stamp_sec;
+  cbs_belief_receive_gate_reference_set_ = true;
+  cbs_belief_receive_clock_sub_.shutdown();
+  LOG(INFO) << "Kimera CBS incoming belief receive gate reference stamp="
+            << std::fixed << std::setprecision(9)
+            << cbs_belief_receive_gate_reference_stamp_sec_
+            << " from /clock, accepting belief odometry with to_stamp >= "
+            << (cbs_belief_receive_gate_reference_stamp_sec_ +
+                cbs_belief_receive_start_delay_sec_)
+            << " (delay=" << cbs_belief_receive_start_delay_sec_ << " s).";
+}
+
 void KimeraVioRos::poseOdomBeliefInCallback(
     const liorf::pose_odom_belief_arrayConstPtr& msg) {
   try {
@@ -966,6 +1122,9 @@ void KimeraVioRos::poseOdomBeliefInCallback(
 
     std::vector<ExternalOdometryBelief> converted_beliefs;
     converted_beliefs.reserve(msg->beliefs.size());
+    size_t dropped_by_receive_gate = 0u;
+
+    initializeIncomingOdomBeliefReceiveGate(*msg);
 
     gtsam::Pose3 base_T_external;
     gtsam::Pose3 external_T_base;
@@ -976,6 +1135,10 @@ void KimeraVioRos::poseOdomBeliefInCallback(
 
     for (const auto& belief : msg->beliefs) {
       if (belief.source_agent == cbs_agent_id_) {
+        continue;
+      }
+      if (isIncomingOdomBeliefBeforeReceiveGate(belief)) {
+        ++dropped_by_receive_gate;
         continue;
       }
 
@@ -1013,6 +1176,17 @@ void KimeraVioRos::poseOdomBeliefInCallback(
                   &converted.relative_mu);
       fromMatrix6(transformed_covariance, &converted.covariance);
       converted_beliefs.push_back(converted);
+    }
+
+    if (dropped_by_receive_gate > 0u) {
+      cbs_beliefs_receive_gate_dropped_per_rerun_frame_.fetch_add(
+          dropped_by_receive_gate, std::memory_order_relaxed);
+      ROS_INFO_STREAM_THROTTLE(
+          1.0,
+          "Kimera CBS incoming belief receive gate dropped "
+              << dropped_by_receive_gate
+              << " belief(s) before delay="
+              << cbs_belief_receive_start_delay_sec_ << " s");
     }
 
     bufferExternalOdometryBeliefs(converted_beliefs);

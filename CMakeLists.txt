@@ -7,6 +7,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(catkin_simple REQUIRED)
 find_package(Eigen3 REQUIRED)
+find_package(GTSAM REQUIRED)
 find_package(cbs REQUIRED)
 find_package(aria_viz REQUIRED)
 
@@ -46,16 +47,35 @@ cs_add_library(${PROJECT_NAME}
   src/utils/UtilsRos.cpp
   src/utils/CsvPublisher.cpp
 )
+set(GTSAM_VENDORED_EIGEN_INCLUDE "${GTSAM_INCLUDE_DIR}/gtsam/3rdparty/Eigen")
+if(EXISTS "${GTSAM_VENDORED_EIGEN_INCLUDE}/Eigen/Dense")
+  target_include_directories(${PROJECT_NAME}
+    SYSTEM BEFORE PUBLIC
+      ${GTSAM_VENDORED_EIGEN_INCLUDE}
+  )
+endif()
 target_link_libraries(${PROJECT_NAME} kimera_vio cbs aria_viz)
 
 cs_add_executable(${PROJECT_NAME}_node
   src/KimeraVioRosNode.cpp
 )
+if(EXISTS "${GTSAM_VENDORED_EIGEN_INCLUDE}/Eigen/Dense")
+  target_include_directories(${PROJECT_NAME}_node
+    SYSTEM BEFORE PRIVATE
+      ${GTSAM_VENDORED_EIGEN_INCLUDE}
+  )
+endif()
 target_link_libraries(${PROJECT_NAME}_node ${PROJECT_NAME})
 
 cs_add_executable(csv_publisher_node
   src/utils/CsvPublisherNode.cpp
 )
+if(EXISTS "${GTSAM_VENDORED_EIGEN_INCLUDE}/Eigen/Dense")
+  target_include_directories(csv_publisher_node
+    SYSTEM BEFORE PRIVATE
+      ${GTSAM_VENDORED_EIGEN_INCLUDE}
+  )
+endif()
 target_link_libraries(csv_publisher_node ${PROJECT_NAME})
 
 catkin_add_gtest(testKimeraVioRos

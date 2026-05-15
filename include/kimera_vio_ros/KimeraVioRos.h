@@ -4,8 +4,10 @@
  */
 
 #include <ros/ros.h>
+#include <rosgraph_msgs/Clock.h>
 #include <std_srvs/Trigger.h>
 
+#include <atomic>
 #include <deque>
 #include <kimera-vio/pipeline/Pipeline-definitions.h>
 #include <kimera-vio/pipeline/Pipeline.h>
@@ -67,6 +69,17 @@ class KimeraVioRos {
   void poseOdomBeliefInCallback(
       const liorf::pose_odom_belief_arrayConstPtr& msg);
 
+  double incomingOdomBeliefGateStampSec(
+      const liorf::pose_odom_belief& belief) const;
+
+  void initializeIncomingOdomBeliefReceiveGate(
+      const liorf::pose_odom_belief_array& msg);
+
+  bool isIncomingOdomBeliefBeforeReceiveGate(
+      const liorf::pose_odom_belief& belief) const;
+
+  void cbsBeliefReceiveClockCallback(const rosgraph_msgs::ClockConstPtr& msg);
+
   bool lookupExternalPoseFrameTransform(gtsam::Pose3* base_T_external,
                                         gtsam::Pose3* external_T_base);
 
@@ -119,6 +132,10 @@ class KimeraVioRos {
   std::string cbs_odom_belief_in_topic_;
   std::string cbs_odom_belief_out_topic_;
   std::string cbs_external_pose_frame_id_;
+  double cbs_belief_receive_start_delay_sec_ = 0.0;
+  bool cbs_belief_receive_gate_reference_set_ = false;
+  double cbs_belief_receive_gate_reference_stamp_sec_ = 0.0;
+  std::atomic<size_t> cbs_beliefs_receive_gate_dropped_per_rerun_frame_{0u};
   uint8_t cbs_agent_id_ = static_cast<uint8_t>('k');
   std::unique_ptr<RosRerunVisualizer> headless_rerun_visualizer_;
   std::vector<gtsam::Pose3> headless_rerun_trajectory_;
@@ -126,6 +143,7 @@ class KimeraVioRos {
   ros::Publisher headless_odometry_pub_;
   ros::Publisher pose_odom_belief_out_pub_;
   ros::Subscriber pose_odom_belief_in_sub_;
+  ros::Subscriber cbs_belief_receive_clock_sub_;
   tf::TransformListener tf_listener_;
 };
 

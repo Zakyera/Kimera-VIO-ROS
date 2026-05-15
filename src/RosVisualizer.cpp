@@ -46,42 +46,87 @@ DECLARE_int32(viz_type);
 namespace VIO {
 
 namespace {
-gtsam::Matrix6 sanitizePoseCovariance(const gtsam::Matrix& state_covariance) {
-  gtsam::Matrix6 pose_cov = gtsam::Matrix6::Identity() * 1e-3;
+gtsam::Matrix6 poseCovarianceFromMatrix(const gtsam::Matrix& state_covariance) {
+  gtsam::Matrix6 pose_cov = gtsam::Matrix6::Zero();
   if (state_covariance.rows() >= 6 && state_covariance.cols() >= 6) {
     pose_cov = gtsam::sub(state_covariance, 0, 6, 0, 6);
-  }
-
-  pose_cov = 0.5 * (pose_cov + pose_cov.transpose());
-  for (size_t i = 0u; i < 6u; ++i) {
-    if (!std::isfinite(pose_cov(i, i)) || pose_cov(i, i) <= 1e-9) {
-      pose_cov(i, i) = 1e-3;
-    }
   }
   return pose_cov;
 }
 
-Eigen::Matrix3d sanitizeTranslationCovariance(
+template <typename VisualizerT>
+void drawRawPoseCovariance6x6(VisualizerT* visualizer,
+                              const std::string& base_path,
+                              const gtsam::Matrix& source_covariance) {
+  if (!visualizer) {
+    return;
+  }
+
+  const bool has_6x6 =
+      source_covariance.rows() >= 6 && source_covariance.cols() >= 6;
+  visualizer->drawScalar(base_path + "/valid/has_6x6", has_6x6 ? 1.0 : 0.0);
+  if (!has_6x6) {
+    return;
+  }
+
+  const gtsam::Matrix6 pose_covariance =
+      gtsam::sub(source_covariance, 0, 6, 0, 6);
+  const char* labels[6] = {"rot_x",   "rot_y",   "rot_z",
+                           "trans_x", "trans_y", "trans_z"};
+
+  bool all_finite = true;
+  for (size_t row = 0u; row < 6u; ++row) {
+    for (size_t col = 0u; col < 6u; ++col) {
+      const double value = pose_covariance(row, col);
+      all_finite = all_finite && std::isfinite(value);
+      visualizer->drawScalar(base_path + "/matrix/" + labels[row] + "__" +
+                                 labels[col],
+                             value);
+    }
+    visualizer->drawScalar(base_path + "/diag/" + labels[row],
+                           pose_covariance(row, row));
+  }
+
+  const gtsam::Matrix6 symmetric_covariance =
+      0.5 * (pose_covariance + pose_covariance.transpose());
+  visualizer->drawScalar(base_path + "/valid/all_finite",
+                         all_finite ? 1.0 : 0.0);
+  visualizer->drawScalar(base_path + "/summary/trace",
+                         pose_covariance.trace());
+  visualizer->drawScalar(base_path + "/summary/frobenius_norm",
+                         pose_covariance.norm());
+  visualizer->drawScalar(base_path + "/summary/asymmetry_frobenius_norm",
+                         (pose_covariance - pose_covariance.transpose()).norm());
+  visualizer->drawScalar(base_path + "/block_norm/rotation_3x3",
+                         pose_covariance.block<3, 3>(0, 0).norm());
+  visualizer->drawScalar(base_path + "/block_norm/translation_3x3",
+                         pose_covariance.block<3, 3>(3, 3).norm());
+  visualizer->drawScalar(base_path + "/block_norm/rotation_translation_3x3",
+                         pose_covariance.block<3, 3>(0, 3).norm());
+
+  Eigen::SelfAdjointEigenSolver<gtsam::Matrix6> eig(symmetric_covariance);
+  if (eig.info() != Eigen::Success) {
+    visualizer->drawScalar(base_path + "/valid/eigen_success", 0.0);
+    return;
+  }
+  visualizer->drawScalar(base_path + "/valid/eigen_success", 1.0);
+  const gtsam::Vector6 eigenvalues = eig.eigenvalues();
+  for (size_t i = 0u; i < 6u; ++i) {
+    visualizer->drawScalar(base_path + "/eigenvalues/lambda_" +
+                               std::to_string(i),
+                           eigenvalues(i));
+  }
+  visualizer->drawScalar(base_path + "/eigenvalues/min", eigenvalues.minCoeff());
+  visualizer->drawScalar(base_path + "/eigenvalues/max", eigenvalues.maxCoeff());
+}
+
+Eigen::Matrix3d translationCovarianceFromPoseCovariance(
     const gtsam::Matrix& pose_covariance) {
-  Eigen::Matrix3d covariance = Eigen::Matrix3d::Identity() * 1e-3;
+  Eigen::Matrix3d covariance = Eigen::Matrix3d::Zero();
   if (pose_covariance.rows() >= 6 && pose_covariance.cols() >= 6) {
     covariance = pose_covariance.block<3, 3>(3, 3);
   }
-
-  covariance = 0.5 * (covariance + covariance.transpose());
-  if (!covariance.allFinite()) {
-    return Eigen::Matrix3d::Identity() * 1e-3;
-  }
-
-  Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> eig(covariance);
-  if (eig.info() != Eigen::Success) {
-    return Eigen::Matrix3d::Identity() * 1e-3;
-  }
-
-  const Eigen::Vector3d eigenvalues =
-      eig.eigenvalues().array().max(1e-9).matrix();
-  return eig.eigenvectors() * eigenvalues.asDiagonal() *
-         eig.eigenvectors().transpose();
+  return covariance;
 }
 
 std::string sanitizeCsvToken(std::string token) {
@@ -495,7 +540,11 @@ void RosVisualizer::publishRerunBackendOutput(
   rerun_visualizer_->drawTf(
       "kimera/base_link", output->W_State_Blkf_.pose_, 0.5f);
   const Eigen::Matrix3d current_pose_covariance =
-      sanitizeTranslationCovariance(output->state_covariance_lkf_);
+      translationCovarianceFromPoseCovariance(output->state_covariance_lkf_);
+  drawRawPoseCovariance6x6(
+      rerun_visualizer_.get(),
+      "kimera/current_pose/raw_pose_covariance_6x6",
+      poseCovarianceFromMatrix(output->state_covariance_lkf_));
   rerun_visualizer_->drawUncertainty("kimera/current_pose/uncertainty",
                                      output->W_State_Blkf_.pose_,
                                      current_pose_covariance,

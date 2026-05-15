@@ -44,6 +44,7 @@ file and include this one to launch KimeraVIO on the dataset of your choice -->
   <arg name="cbs_odom_belief_in_topic" default="/kimera/cbs/odom_belief_in"/>
   <arg name="cbs_odom_belief_out_topic" default="/kimera/cbs/odom_belief_out"/>
   <arg name="cbs_belief_forward_queue_limit" default="800"/>
+  <arg name="cbs_belief_receive_start_delay_sec" default="0.0"/>
   <arg name="cbs_external_belief_timestamp_tolerance_sec" default="0.2"/>
   <arg name="cbs_external_pose_frame_id" default=""/>
   <arg name="cbs_odom_unmatched_retry_max_age_sec" default="5.0"/>
@@ -131,6 +132,7 @@ file and include this one to launch KimeraVIO on the dataset of your choice -->
 
   <arg name="close_on_error" default="true"/>
   <arg name="debug" default="false"/>
+  <arg name="node_output" default="screen"/>
   <arg name="launch_prefix" value="" unless="$(arg debug)"/>
   <arg name="launch_prefix" value="gdb -ex run --args" if="$(arg debug)"/>
 
@@ -149,7 +151,7 @@ file and include this one to launch KimeraVIO on the dataset of your choice -->
 
   <!-- Launch main node  -->
   <node name="kimera_vio_ros_node" pkg="kimera_vio_ros" type="kimera_vio_ros_node"
-        output="screen" ns="kimera_vio_ros"
+        output="$(arg node_output)" ns="kimera_vio_ros"
         launch-prefix="$(arg launch_prefix)"
         required="$(arg close_on_error)"
         args="--use_lcd=$(arg use_lcd)
@@ -211,6 +213,7 @@ file and include this one to launch KimeraVIO on the dataset of your choice -->
     <param name="cbs_odom_belief_in_topic" value="$(arg cbs_odom_belief_in_topic)"/>
     <param name="cbs_odom_belief_out_topic" value="$(arg cbs_odom_belief_out_topic)"/>
     <param name="cbs_belief_forward_queue_limit" value="$(arg cbs_belief_forward_queue_limit)"/>
+    <param name="cbs_belief_receive_start_delay_sec" value="$(arg cbs_belief_receive_start_delay_sec)"/>
     <param name="cbs_external_pose_frame_id" value="$(arg cbs_external_pose_frame_id)"/>
     <param name="rerun_visualizer_enable" value="$(arg rerun_visualizer_enable)"/>
     <param name="rerun_recording_id" value="$(arg rerun_recording_id)"/>
