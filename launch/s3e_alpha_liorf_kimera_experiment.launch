@@ -15,6 +15,7 @@
   <arg name="liorf_rerun_local_map_max_points" default="10000"/>
   <arg name="liorf_use_gps" default="false"/>
   <arg name="liorf_initial_yaw_sigma" default="3.141592653589793"/>
+  <arg name="liorf_cbs_backend_mode" default="map_optimization"/>
 
   <arg name="use_kimera_rviz" default="true"/>
   <arg name="use_liorf_rviz" default="false"/>
@@ -72,6 +73,7 @@
   <include file="$(find liorf)/launch/run_lio_sam_s3e_alpha.launch">
     <arg name="use_rviz" value="$(arg use_liorf_rviz)"/>
     <arg name="initial_yaw_sigma" value="$(arg liorf_initial_yaw_sigma)"/>
+    <arg name="cbs_backend_mode" value="$(arg liorf_cbs_backend_mode)"/>
     <arg name="rerun_visualizer_enable"
          value="$(arg rerun_visualizer_enable)"/>
     <arg name="rerun_recording_id" value="$(arg rerun_recording_id)"/>
