@@ -6,11 +6,35 @@
   <arg name="bag_start" default="0.0"/>
   <arg name="bag_duration" default="60.0"/>
   <arg name="shutdown_on_bag_finish" default="false"/>
+  <arg name="rerun_visualization_mode" default="external_topics"/>
   <arg name="rerun_visualizer_enable" default="true"/>
   <arg name="rerun_recording_id" default=""/>
   <arg name="rerun_host" default="rerun+http://172.18.0.1:9876/proxy"/>
   <arg name="rerun_factor_graph_enable" default="true"/>
   <arg name="rerun_world_alignment_enable" default="true"/>
+  <arg name="rerun_topic_visualizer_publish_rate_hz" default="5.0"/>
+  <arg name="rerun_topic_visualizer_kimera_odom_topic"
+       default="/kimera_vio_ros/odometry"/>
+  <arg name="rerun_topic_visualizer_liorf_odom_topic"
+       default="/liorf/mapping/odometry"/>
+  <arg name="rerun_topic_visualizer_uncertainty_enable" default="true"/>
+  <arg name="rerun_topic_visualizer_raw_covariance_enable" default="true"/>
+  <arg name="rerun_topic_visualizer_lag_scalars_enable" default="true"/>
+  <arg name="rerun_topic_visualizer_max_trajectory_len" default="2000"/>
+  <arg name="rerun_topic_visualizer_liorf_point_clouds_enable" default="true"/>
+  <arg name="rerun_topic_visualizer_liorf_local_map_topic"
+       default="/liorf/mapping/map_local"/>
+  <arg name="rerun_topic_visualizer_liorf_current_scan_topic"
+       default="/liorf/mapping/cloud_registered"/>
+  <arg name="rerun_topic_visualizer_liorf_current_scan_max_points"
+       default="20000"/>
+  <arg name="rerun_topic_visualizer_kimera_landmarks_enable" default="true"/>
+  <arg name="rerun_topic_visualizer_kimera_landmarks_topic"
+       default="/kimera_vio_ros/landmarks"/>
+  <arg name="rerun_topic_visualizer_kimera_landmarks_max_points"
+       default="3000"/>
+  <arg name="kimera_headless_landmarks_publish_enable" default="true"/>
+  <arg name="kimera_headless_landmarks_max_points" default="3000"/>
   <arg name="liorf_rerun_local_map_leaf_size" default="1.0"/>
   <arg name="liorf_rerun_local_map_max_points" default="10000"/>
   <arg name="liorf_use_gps" default="false"/>
@@ -41,6 +65,8 @@
   <arg name="liorf_cbs_k2l_odom_factor_covariance_scale" default="1.0"/>
   <arg name="liorf_cbs_k2l_debug_visualization_enable" default="false"/>
   <arg name="liorf_belief_exchange_window_size" default="30"/>
+  <arg name="kimera_cbs_odom_sender_mode" default="adjacent_window"/>
+  <arg name="liorf_cbs_odom_sender_mode" default="adjacent_window"/>
   <arg name="cbs_odom_unmatched_retry_max_age_sec" default="5.0"/>
   <arg name="cbs_odom_unmatched_retry_max_beliefs" default="500"/>
   <arg name="liorf_cbs_l2k_cov_audit_enable" default="false"/>
@@ -70,12 +96,17 @@
          name="/cbsms/rerun_recording_id"
          value="$(arg rerun_recording_id)"/>
 
+  <arg name="rerun_inline_visualizer_enable"
+       value="$(eval arg('rerun_visualizer_enable') and arg('rerun_visualization_mode') == 'inline')"/>
+  <arg name="rerun_external_topic_visualizer_enable"
+       value="$(eval arg('rerun_visualizer_enable') and arg('rerun_visualization_mode') == 'external_topics')"/>
+
   <include file="$(find liorf)/launch/run_lio_sam_s3e_alpha.launch">
     <arg name="use_rviz" value="$(arg use_liorf_rviz)"/>
     <arg name="initial_yaw_sigma" value="$(arg liorf_initial_yaw_sigma)"/>
     <arg name="cbs_backend_mode" value="$(arg liorf_cbs_backend_mode)"/>
     <arg name="rerun_visualizer_enable"
-         value="$(arg rerun_visualizer_enable)"/>
+         value="$(arg rerun_inline_visualizer_enable)"/>
     <arg name="rerun_recording_id" value="$(arg rerun_recording_id)"/>
     <arg name="rerun_host" value="$(arg rerun_host)"/>
     <arg name="rerun_factor_graph_enable"
@@ -116,6 +147,8 @@
          value="$(arg liorf_cbs_odom_belief_out_topic)"/>
     <arg name="cbs_belief_exchange_window_size"
          value="$(arg liorf_belief_exchange_window_size)"/>
+    <arg name="cbs_odom_sender_mode"
+         value="$(arg liorf_cbs_odom_sender_mode)"/>
     <arg name="cbs_odom_unmatched_retry_max_age_sec"
          value="$(arg cbs_odom_unmatched_retry_max_age_sec)"/>
     <arg name="cbs_odom_unmatched_retry_max_beliefs"
@@ -144,13 +177,17 @@
     <arg name="visualize" value="$(arg kimera_visualize)"/>
     <arg name="node_output" value="$(arg kimera_node_output)"/>
     <arg name="rerun_visualizer_enable"
-         value="$(arg rerun_visualizer_enable)"/>
+         value="$(arg rerun_inline_visualizer_enable)"/>
     <arg name="rerun_recording_id" value="$(arg rerun_recording_id)"/>
     <arg name="rerun_host" value="$(arg rerun_host)"/>
     <arg name="rerun_factor_graph_enable"
          value="$(arg rerun_factor_graph_enable)"/>
     <arg name="rerun_world_alignment_enable"
          value="$(arg rerun_world_alignment_enable)"/>
+    <arg name="headless_landmarks_publish_enable"
+         value="$(eval arg('kimera_headless_landmarks_publish_enable') and arg('rerun_external_topic_visualizer_enable'))"/>
+    <arg name="headless_landmarks_max_points"
+         value="$(arg kimera_headless_landmarks_max_points)"/>
     <arg name="cbs_belief_bridge_enable" value="$(arg enable_cbs_bridge)"/>
     <arg name="cbs_belief_receive_start_delay_sec"
          value="$(arg cbs_belief_receive_start_delay_sec)"/>
@@ -164,6 +201,8 @@
          value="$(arg cbs_odom_unmatched_retry_max_age_sec)"/>
     <arg name="cbs_odom_unmatched_retry_max_beliefs"
          value="$(arg cbs_odom_unmatched_retry_max_beliefs)"/>
+    <arg name="cbs_odom_sender_mode"
+         value="$(arg kimera_cbs_odom_sender_mode)"/>
     <arg name="cbs_enable_soft_reset" value="$(arg cbs_enable_soft_reset)"/>
     <arg name="cbs_use_raw_previous_belief_gate"
          value="$(arg cbs_use_raw_previous_belief_gate)"/>
@@ -193,6 +232,47 @@
     <arg name="include_pipeline_flags" value="$(arg include_pipeline_flags)"/>
     <arg name="pipeline_flagfile" value="$(arg pipeline_flagfile)"/>
   </include>
+
+  <node if="$(arg rerun_external_topic_visualizer_enable)"
+        pkg="kimera_vio_ros"
+        type="rerun_topic_visualizer_node"
+        name="rerun_topic_visualizer"
+        output="screen">
+    <param name="rerun_recording_id" value="$(arg rerun_recording_id)"/>
+    <param name="rerun_host" value="$(arg rerun_host)"/>
+    <param name="kimera_odom_topic"
+           value="$(arg rerun_topic_visualizer_kimera_odom_topic)"/>
+    <param name="liorf_odom_topic"
+           value="$(arg rerun_topic_visualizer_liorf_odom_topic)"/>
+    <param name="publish_rate_hz"
+           value="$(arg rerun_topic_visualizer_publish_rate_hz)"/>
+    <param name="uncertainty_enable"
+           value="$(arg rerun_topic_visualizer_uncertainty_enable)"/>
+    <param name="raw_covariance_enable"
+           value="$(arg rerun_topic_visualizer_raw_covariance_enable)"/>
+    <param name="lag_scalars_enable"
+           value="$(arg rerun_topic_visualizer_lag_scalars_enable)"/>
+    <param name="world_alignment_enable"
+           value="$(arg rerun_world_alignment_enable)"/>
+    <param name="max_trajectory_len"
+           value="$(arg rerun_topic_visualizer_max_trajectory_len)"/>
+    <param name="liorf_point_clouds_enable"
+           value="$(arg rerun_topic_visualizer_liorf_point_clouds_enable)"/>
+    <param name="liorf_local_map_topic"
+           value="$(arg rerun_topic_visualizer_liorf_local_map_topic)"/>
+    <param name="liorf_current_scan_topic"
+           value="$(arg rerun_topic_visualizer_liorf_current_scan_topic)"/>
+    <param name="liorf_local_map_max_points"
+           value="$(arg liorf_rerun_local_map_max_points)"/>
+    <param name="liorf_current_scan_max_points"
+           value="$(arg rerun_topic_visualizer_liorf_current_scan_max_points)"/>
+    <param name="kimera_landmarks_enable"
+           value="$(arg rerun_topic_visualizer_kimera_landmarks_enable)"/>
+    <param name="kimera_landmarks_topic"
+           value="$(arg rerun_topic_visualizer_kimera_landmarks_topic)"/>
+    <param name="kimera_landmarks_max_points"
+           value="$(arg rerun_topic_visualizer_kimera_landmarks_max_points)"/>
+  </node>
 
   <node if="$(arg play_bag)"
         pkg="rosbag"

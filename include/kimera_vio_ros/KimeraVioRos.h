@@ -55,11 +55,15 @@ class KimeraVioRos {
 
   void initializeHeadlessOdometryPublisher();
 
+  void initializeHeadlessLandmarksPublisher();
+
   void initializeHeadlessRerunVisualizer();
 
   void publishHeadlessBackendOutput(const BackendOutput::ConstPtr& output);
 
   void publishHeadlessOdometry(const BackendOutput::ConstPtr& output);
+
+  void publishHeadlessLandmarks(const BackendOutput::ConstPtr& output);
 
   void publishHeadlessRerunBackendOutput(
       const BackendOutput::ConstPtr& output);
@@ -123,6 +127,8 @@ class KimeraVioRos {
 
   bool headless_cbs_belief_bridge_enable_ = false;
   bool headless_odometry_publish_enable_ = false;
+  bool headless_landmarks_publish_enable_ = false;
+  int headless_landmarks_max_points_ = 3000;
   bool headless_rerun_visualizer_enable_ = false;
   bool headless_rerun_factor_graph_enable_ = true;
   std::string odom_frame_id_;
@@ -141,6 +147,7 @@ class KimeraVioRos {
   std::vector<gtsam::Pose3> headless_rerun_trajectory_;
   int64_t headless_rerun_last_kf_id_ = -1;
   ros::Publisher headless_odometry_pub_;
+  ros::Publisher headless_landmarks_pub_;
   ros::Publisher pose_odom_belief_out_pub_;
   ros::Subscriber pose_odom_belief_in_sub_;
   ros::Subscriber cbs_belief_receive_clock_sub_;

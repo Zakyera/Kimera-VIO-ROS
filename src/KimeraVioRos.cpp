@@ -7,6 +7,7 @@
 #include "kimera_vio_ros/KimeraVioRos.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
@@ -27,6 +28,8 @@
 #include <geometry_msgs/Transform.h>
 #include <nav_msgs/Odometry.h>
 #include <ros/ros.h>
+#include <sensor_msgs/PointCloud2.h>
+#include <sensor_msgs/point_cloud2_iterator.h>
 #include <std_srvs/Trigger.h>
 #include <std_srvs/TriggerRequest.h>
 #include <std_srvs/TriggerResponse.h>
@@ -46,6 +49,15 @@
 namespace VIO {
 
 namespace {
+
+template <typename TimerStart>
+inline double elapsedSec(const TimerStart& start_time) {
+  return utils::Timer::toc<std::chrono::duration<double>>(start_time).count();
+}
+
+inline double secToMs(const double seconds) {
+  return seconds * 1000.0;
+}
 
 gtsam::Matrix6 poseCovarianceFromMatrix(const gtsam::Matrix& state_covariance) {
   gtsam::Matrix6 pose_cov = gtsam::Matrix6::Zero();
@@ -339,6 +351,14 @@ KimeraVioRos::KimeraVioRos()
       "cbs_belief_bridge_enable", headless_cbs_belief_bridge_enable_, true);
   nh_private_.param(
       "headless_odometry_publish_enable", headless_odometry_publish_enable_, true);
+  nh_private_.param("headless_landmarks_publish_enable",
+                    headless_landmarks_publish_enable_,
+                    false);
+  nh_private_.param("headless_landmarks_max_points",
+                    headless_landmarks_max_points_,
+                    3000);
+  headless_landmarks_max_points_ =
+      std::max(0, headless_landmarks_max_points_);
   nh_private_.param(
       "rerun_visualizer_enable", headless_rerun_visualizer_enable_, false);
   nh_private_.param("rerun_factor_graph_enable",
@@ -389,6 +409,7 @@ KimeraVioRos::KimeraVioRos()
   initializeHeadlessCbsBeliefBridge();
   if (!use_rviz_) {
     initializeHeadlessOdometryPublisher();
+    initializeHeadlessLandmarksPublisher();
     initializeHeadlessRerunVisualizer();
   }
 }
@@ -488,7 +509,8 @@ bool KimeraVioRos::runKimeraVio() {
   CHECK(vio_pipeline_) << "Vio pipeline construction failed.";
   if (headless_cbs_belief_bridge_enable_ ||
       (!use_rviz_ &&
-       (headless_odometry_publish_enable_ || headless_rerun_visualizer_))) {
+       (headless_odometry_publish_enable_ ||
+        headless_landmarks_publish_enable_ || headless_rerun_visualizer_))) {
     vio_pipeline_->registerExternalBackendOutputCallback(
         [this](const BackendOutput::Ptr& output) {
           publishHeadlessBackendOutput(output);
@@ -756,6 +778,20 @@ void KimeraVioRos::initializeHeadlessOdometryPublisher() {
             << headless_odometry_pub_.getTopic() << "'.";
 }
 
+void KimeraVioRos::initializeHeadlessLandmarksPublisher() {
+  if (!headless_landmarks_publish_enable_) {
+    LOG(INFO) << "Kimera headless landmarks publisher disabled.";
+    return;
+  }
+
+  ros::NodeHandle nh;
+  headless_landmarks_pub_ =
+      nh.advertise<sensor_msgs::PointCloud2>("landmarks", 1, false);
+  LOG(INFO) << "Kimera headless landmarks publisher enabled on topic '"
+            << headless_landmarks_pub_.getTopic()
+            << "' with max_points=" << headless_landmarks_max_points_ << ".";
+}
+
 void KimeraVioRos::initializeHeadlessRerunVisualizer() {
   if (!headless_rerun_visualizer_enable_) {
     LOG(INFO) << "Kimera headless Rerun visualizer disabled.";
@@ -771,11 +807,30 @@ void KimeraVioRos::initializeHeadlessRerunVisualizer() {
 
 void KimeraVioRos::publishHeadlessBackendOutput(
     const BackendOutput::ConstPtr& output) {
+  const auto total_start_time = VIO::utils::Timer::tic();
+  double odometry_publish_time_sec = 0.0;
+  double rerun_publish_time_sec = 0.0;
+  double odometry_belief_publish_time_sec = 0.0;
   if (!use_rviz_) {
+    const auto odometry_publish_start_time = VIO::utils::Timer::tic();
     publishHeadlessOdometry(output);
+    odometry_publish_time_sec = elapsedSec(odometry_publish_start_time);
+    publishHeadlessLandmarks(output);
+    const auto rerun_publish_start_time = VIO::utils::Timer::tic();
     publishHeadlessRerunBackendOutput(output);
+    rerun_publish_time_sec = elapsedSec(rerun_publish_start_time);
   }
+  const auto odometry_belief_publish_start_time = VIO::utils::Timer::tic();
   publishHeadlessOdometryBelief(output);
+  odometry_belief_publish_time_sec =
+      elapsedSec(odometry_belief_publish_start_time);
+  LOG(INFO) << "KIMERA_BACKEND_CALLBACK_TIMING_ROW,"
+            << (output ? output->cur_kf_id_ : 0u) << ","
+            << secToMs(elapsedSec(total_start_time)) << ","
+            << secToMs(odometry_publish_time_sec) << ","
+            << secToMs(rerun_publish_time_sec) << ","
+            << secToMs(odometry_belief_publish_time_sec) << ","
+            << (use_rviz_ ? 1 : 0);
 }
 
 void KimeraVioRos::publishHeadlessOdometry(
@@ -842,14 +897,90 @@ void KimeraVioRos::publishHeadlessOdometry(
   }
 }
 
+void KimeraVioRos::publishHeadlessLandmarks(
+    const BackendOutput::ConstPtr& output) {
+  try {
+    CHECK(output);
+    if (!headless_landmarks_publish_enable_ ||
+        headless_landmarks_pub_.getNumSubscribers() == 0u) {
+      return;
+    }
+
+    std::vector<gtsam::Point3> landmarks;
+    const size_t total_landmarks = output->landmarks_with_id_map_.size();
+    const size_t max_points =
+        headless_landmarks_max_points_ > 0
+            ? std::min(total_landmarks,
+                       static_cast<size_t>(headless_landmarks_max_points_))
+            : total_landmarks;
+    if (max_points == 0u) {
+      return;
+    }
+    landmarks.reserve(max_points);
+    const size_t stride =
+        max_points < total_landmarks
+            ? std::max<size_t>(1u, (total_landmarks + max_points - 1u) /
+                                       max_points)
+            : 1u;
+    size_t index = 0u;
+    for (const auto& id_landmark : output->landmarks_with_id_map_) {
+      if (index++ % stride != 0u) {
+        continue;
+      }
+      const gtsam::Point3& point = id_landmark.second;
+      if (std::isfinite(point.x()) && std::isfinite(point.y()) &&
+          std::isfinite(point.z())) {
+        landmarks.emplace_back(point);
+      }
+      if (landmarks.size() >= max_points) {
+        break;
+      }
+    }
+    if (landmarks.empty()) {
+      return;
+    }
+
+    sensor_msgs::PointCloud2 msg;
+    msg.header.stamp.fromNSec(output->timestamp_);
+    msg.header.frame_id = odom_frame_id_;
+    sensor_msgs::PointCloud2Modifier modifier(msg);
+    modifier.setPointCloud2FieldsByString(1, "xyz");
+    modifier.resize(landmarks.size());
+
+    sensor_msgs::PointCloud2Iterator<float> iter_x(msg, "x");
+    sensor_msgs::PointCloud2Iterator<float> iter_y(msg, "y");
+    sensor_msgs::PointCloud2Iterator<float> iter_z(msg, "z");
+    for (const auto& landmark : landmarks) {
+      *iter_x = static_cast<float>(landmark.x());
+      *iter_y = static_cast<float>(landmark.y());
+      *iter_z = static_cast<float>(landmark.z());
+      ++iter_x;
+      ++iter_y;
+      ++iter_z;
+    }
+
+    headless_landmarks_pub_.publish(msg);
+  } catch (const std::exception& e) {
+    LOG(WARNING) << "Kimera headless landmarks publish skipped: " << e.what();
+  } catch (...) {
+    LOG(WARNING) << "Kimera headless landmarks publish skipped.";
+  }
+}
+
 void KimeraVioRos::publishHeadlessRerunBackendOutput(
     const BackendOutput::ConstPtr& output) {
   try {
+    const auto rerun_total_start_time = VIO::utils::Timer::tic();
+    double current_pose_time_sec = 0.0;
+    double trajectory_time_sec = 0.0;
+    double landmarks_time_sec = 0.0;
+    double factor_graph_time_sec = 0.0;
     CHECK(output);
     if (!headless_rerun_visualizer_) {
       return;
     }
 
+    const auto current_pose_start_time = VIO::utils::Timer::tic();
     const gtsam::Pose3& pose = output->W_State_Blkf_.pose_;
     headless_rerun_visualizer_->setTimeNSec(output->timestamp_);
     headless_rerun_visualizer_->drawTf("kimera/base_link", pose, 0.5f);
@@ -911,7 +1042,9 @@ void KimeraVioRos::publishHeadlessRerunBackendOutput(
           "kimera/cbs/marginalization_graph/factor_count",
           output->cbs_marginalization_graph_factor_count_);
     }
+    current_pose_time_sec = elapsedSec(current_pose_start_time);
 
+    const auto trajectory_start_time = VIO::utils::Timer::tic();
     const int64_t current_kf_id = static_cast<int64_t>(output->cur_kf_id_);
     if (current_kf_id != headless_rerun_last_kf_id_) {
       headless_rerun_trajectory_.push_back(pose);
@@ -924,7 +1057,9 @@ void KimeraVioRos::publishHeadlessRerunBackendOutput(
           Eigen::Vector4f(40.f, 220.f, 80.f, 255.f),
           1.5f);
     }
+    trajectory_time_sec = elapsedSec(trajectory_start_time);
 
+    const auto landmarks_start_time = VIO::utils::Timer::tic();
     std::vector<gtsam::Point3> landmarks;
     landmarks.reserve(output->landmarks_with_id_map_.size());
     for (const auto& id_landmark : output->landmarks_with_id_map_) {
@@ -937,7 +1072,9 @@ void KimeraVioRos::publishHeadlessRerunBackendOutput(
           Eigen::Vector4f(40.f, 220.f, 80.f, 180.f),
           2.f);
     }
+    landmarks_time_sec = elapsedSec(landmarks_start_time);
 
+    const auto factor_graph_start_time = VIO::utils::Timer::tic();
     if (headless_rerun_factor_graph_enable_ &&
         output->factor_graph_.size() > 0u && output->state_.size() > 0u) {
       headless_rerun_visualizer_->drawFactors(
@@ -949,6 +1086,17 @@ void KimeraVioRos::publishHeadlessRerunBackendOutput(
       headless_rerun_visualizer_->drawScalar(
           "kimera/factor_graph/factors_total", output->factor_graph_.size());
     }
+    factor_graph_time_sec = elapsedSec(factor_graph_start_time);
+    LOG(INFO) << "KIMERA_RERUN_CALLBACK_TIMING_ROW,"
+              << output->cur_kf_id_ << ","
+              << secToMs(elapsedSec(rerun_total_start_time)) << ","
+              << secToMs(current_pose_time_sec) << ","
+              << secToMs(trajectory_time_sec) << ","
+              << secToMs(landmarks_time_sec) << ","
+              << secToMs(factor_graph_time_sec) << ","
+              << output->landmarks_with_id_map_.size() << ","
+              << output->factor_graph_.size() << ","
+              << (headless_rerun_factor_graph_enable_ ? 1 : 0);
   } catch (const std::exception& e) {
     LOG(WARNING) << "Kimera headless Rerun publish skipped: " << e.what();
   } catch (...) {

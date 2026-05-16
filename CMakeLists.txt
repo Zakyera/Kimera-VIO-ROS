@@ -78,6 +78,17 @@ if(EXISTS "${GTSAM_VENDORED_EIGEN_INCLUDE}/Eigen/Dense")
 endif()
 target_link_libraries(csv_publisher_node ${PROJECT_NAME})
 
+cs_add_executable(rerun_topic_visualizer_node
+  src/RerunTopicVisualizerNode.cpp
+)
+if(EXISTS "${GTSAM_VENDORED_EIGEN_INCLUDE}/Eigen/Dense")
+  target_include_directories(rerun_topic_visualizer_node
+    SYSTEM BEFORE PRIVATE
+      ${GTSAM_VENDORED_EIGEN_INCLUDE}
+  )
+endif()
+target_link_libraries(rerun_topic_visualizer_node ${PROJECT_NAME})
+
 catkin_add_gtest(testKimeraVioRos
   test/testKimeraVioRos.cpp
 )

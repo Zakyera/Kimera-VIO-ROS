@@ -49,6 +49,7 @@ file and include this one to launch KimeraVIO on the dataset of your choice -->
   <arg name="cbs_external_pose_frame_id" default=""/>
   <arg name="cbs_odom_unmatched_retry_max_age_sec" default="5.0"/>
   <arg name="cbs_odom_unmatched_retry_max_beliefs" default="500"/>
+  <arg name="cbs_odom_sender_mode" default="adjacent_window"/>
   <arg name="cbs_use_bpsam_for_local_belief_covariance" default="false"/>
   <arg name="cbs_use_persistent_bpsam_sidecar_for_belief_covariance"
        default="false"/>
@@ -126,6 +127,8 @@ file and include this one to launch KimeraVIO on the dataset of your choice -->
   <arg name="rerun_host" default="rerun+http://172.18.0.1:9876/proxy"/>
   <arg name="rerun_factor_graph_enable" default="true"/>
   <arg name="rerun_world_alignment_enable" default="true"/>
+  <arg name="headless_landmarks_publish_enable" default="false"/>
+  <arg name="headless_landmarks_max_points" default="3000"/>
 
   <!-- Only here for convenience -->
   <arg name="run_stereo_dense"     default="false"/>
@@ -195,7 +198,8 @@ file and include this one to launch KimeraVIO on the dataset of your choice -->
               --cbs_l2k_odom_factor_covariance_scale=$(arg cbs_l2k_odom_factor_covariance_scale)
               --cbs_external_belief_timestamp_tolerance_sec=$(arg cbs_external_belief_timestamp_tolerance_sec)
               --cbs_odom_unmatched_retry_max_age_sec=$(arg cbs_odom_unmatched_retry_max_age_sec)
-              --cbs_odom_unmatched_retry_max_beliefs=$(arg cbs_odom_unmatched_retry_max_beliefs)">
+              --cbs_odom_unmatched_retry_max_beliefs=$(arg cbs_odom_unmatched_retry_max_beliefs)
+              --cbs_odom_sender_mode=$(arg cbs_odom_sender_mode)">
     <param name="image_transport" value="$(arg rgb_image_transport)"/>
     <param name="params_folder_path"    value="$(arg params_folder)"/>
     <param name="sensor_params_folder_path" value="$(arg sensor_folder)"/>
@@ -222,6 +226,10 @@ file and include this one to launch KimeraVIO on the dataset of your choice -->
            value="$(arg rerun_factor_graph_enable)"/>
     <param name="rerun_world_alignment_enable"
            value="$(arg rerun_world_alignment_enable)"/>
+    <param name="headless_landmarks_publish_enable"
+           value="$(arg headless_landmarks_publish_enable)"/>
+    <param name="headless_landmarks_max_points"
+           value="$(arg headless_landmarks_max_points)"/>
 
     <!-- Frame IDs for Odometry -->
     <param name="odom_frame_id"      value="$(arg odom_frame_id)"/>
