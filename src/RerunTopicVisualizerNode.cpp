@@ -84,6 +84,17 @@ std::string defaultRerunHost() {
   return "rerun+http://host.docker.internal:9876/proxy";
 }
 
+std::string normalizeEntityPrefix(std::string prefix,
+                                  const std::string& fallback) {
+  while (!prefix.empty() && prefix.front() == '/') {
+    prefix.erase(prefix.begin());
+  }
+  while (!prefix.empty() && prefix.back() == '/') {
+    prefix.pop_back();
+  }
+  return prefix.empty() ? fallback : prefix;
+}
+
 uint64_t stampToNSec(const ros::Time& stamp) {
   return static_cast<uint64_t>(stamp.sec) * 1000000000ull +
          static_cast<uint64_t>(stamp.nsec);
@@ -281,11 +292,40 @@ class RerunTopicVisualizer {
         "kimera_odom_topic", kimera_odom_topic_, "/kimera_vio_ros/odometry");
     private_nh_.param<std::string>(
         "liorf_odom_topic", liorf_odom_topic_, "/liorf/mapping/odometry");
+    private_nh_.param<std::string>(
+        "secondary_entity_prefix", secondary_entity_prefix_, "liorf");
+    private_nh_.param<std::string>(
+        "secondary_frame_name", secondary_frame_name_, "lidar_link");
+    secondary_entity_prefix_ =
+        normalizeEntityPrefix(secondary_entity_prefix_, "liorf");
+    if (secondary_frame_name_.empty()) {
+      secondary_frame_name_ = "base_link";
+    }
     private_nh_.param<double>("publish_rate_hz", publish_rate_hz_, 5.0);
     private_nh_.param<bool>("uncertainty_enable", uncertainty_enable_, true);
     private_nh_.param<bool>("raw_covariance_enable",
                             raw_covariance_enable_,
                             true);
+    private_nh_.param<double>(
+        "kimera_uncertainty_scale", kimera_uncertainty_scale_, 1.25);
+    private_nh_.param<double>("secondary_uncertainty_scale",
+                              secondary_uncertainty_scale_,
+                              1.25);
+    private_nh_.param<double>("aligned_kimera_uncertainty_scale",
+                              aligned_kimera_uncertainty_scale_,
+                              kimera_uncertainty_scale_);
+    if (!std::isfinite(kimera_uncertainty_scale_) ||
+        kimera_uncertainty_scale_ <= 0.0) {
+      kimera_uncertainty_scale_ = 1.25;
+    }
+    if (!std::isfinite(secondary_uncertainty_scale_) ||
+        secondary_uncertainty_scale_ <= 0.0) {
+      secondary_uncertainty_scale_ = 1.25;
+    }
+    if (!std::isfinite(aligned_kimera_uncertainty_scale_) ||
+        aligned_kimera_uncertainty_scale_ <= 0.0) {
+      aligned_kimera_uncertainty_scale_ = kimera_uncertainty_scale_;
+    }
     private_nh_.param<bool>("lag_scalars_enable", lag_scalars_enable_, true);
     private_nh_.param<bool>(
         "world_alignment_enable", world_alignment_enable_, true);
@@ -377,6 +417,8 @@ class RerunTopicVisualizer {
               << recording_id_ << "', host='" << rerun_host_
               << "', kimera_odom_topic='" << kimera_odom_topic_
               << "', liorf_odom_topic='" << liorf_odom_topic_
+              << "', secondary_entity_prefix='" << secondary_entity_prefix_
+              << "', secondary_frame_name='" << secondary_frame_name_
               << "', publish_rate_hz=" << publish_rate_hz_
               << ", liorf_point_clouds_enable="
               << (liorf_point_clouds_enable_ ? "true" : "false")
@@ -463,15 +505,17 @@ class RerunTopicVisualizer {
                     "kimera",
                     "base_link",
                     Eigen::Vector4f(40.f, 220.f, 80.f, 220.f),
-                    &kimera_);
+                    &kimera_,
+                    kimera_uncertainty_scale_);
     }
     if (liorf_pose_valid) {
       publishSource(liorf_msg,
                     liorf_pose,
-                    "liorf",
-                    "lidar_link",
+                    secondary_entity_prefix_,
+                    secondary_frame_name_,
                     Eigen::Vector4f(245.f, 180.f, 20.f, 220.f),
-                    &liorf_);
+                    &liorf_,
+                    secondary_uncertainty_scale_);
     }
 
     if (world_alignment_enable_ && kimera_pose_valid && liorf_pose_valid) {
@@ -494,29 +538,33 @@ class RerunTopicVisualizer {
         }
       }
       if (has_liorf) {
-        visualizer_->drawScalar("visualization/lag/liorf_stamp_age_sec",
+        visualizer_->drawScalar("visualization/lag/" +
+                                    secondary_entity_prefix_ +
+                                    "_stamp_age_sec",
                                 (now - liorf_msg.header.stamp).toSec());
         if (std::isfinite(liorf_interval_sec)) {
           visualizer_->drawScalar(
-              "visualization/rate/liorf_stamp_interval_sec",
+              "visualization/rate/" + secondary_entity_prefix_ +
+                  "_stamp_interval_sec",
               liorf_interval_sec);
         }
       }
       if (has_kimera && has_liorf) {
         visualizer_->drawScalar(
-            "visualization/lag/kimera_minus_liorf_stamp_sec",
+            "visualization/lag/kimera_minus_" + secondary_entity_prefix_ +
+                "_stamp_sec",
             kimera_msg.header.stamp.toSec() - liorf_msg.header.stamp.toSec());
       }
     }
 
     if (liorf_point_clouds_enable_) {
       publishCloudLatest(liorf_local_map_,
-                         "liorf/local_map",
+                         secondary_entity_prefix_ + "/local_map",
                          Eigen::Vector4f(80.f, 180.f, 255.f, 90.f),
                          1.0f,
                          liorf_local_map_max_points_);
       publishCloudLatest(liorf_current_scan_,
-                         "liorf/current_scan",
+                         secondary_entity_prefix_ + "/current_scan",
                          Eigen::Vector4f(255.f, 255.f, 255.f, 180.f),
                          1.5f,
                          liorf_current_scan_max_points_);
@@ -596,7 +644,8 @@ class RerunTopicVisualizer {
                      const std::string& entity_prefix,
                      const std::string& frame_name,
                      const Eigen::Vector4f& rgba,
-                     SourceState* source) {
+                     SourceState* source,
+                     double uncertainty_scale) {
     CHECK_NOTNULL(source);
     const double stamp_sec = msg.header.stamp.toSec();
     {
@@ -645,7 +694,7 @@ class RerunTopicVisualizer {
             pose,
             covariance,
             rgba,
-            1.25f);
+            static_cast<float>(uncertainty_scale));
         visualizer_->drawScalar(
             entity_prefix + "/current_pose/uncertainty_frobenius_norm",
             covariance.norm());
@@ -662,8 +711,9 @@ class RerunTopicVisualizer {
       alignment_initialized_ = true;
       alignment_timestamp_delta_sec_ =
           liorf_msg.header.stamp.toSec() - kimera_msg.header.stamp.toSec();
-      LOG(INFO) << "Rerun topic visualizer initialized Kimera->LiORF "
-                << "world alignment. timestamp_delta_sec="
+      LOG(INFO) << "Rerun topic visualizer initialized Kimera->"
+                << secondary_entity_prefix_
+                << " world alignment. timestamp_delta_sec="
                 << alignment_timestamp_delta_sec_ << ".";
     }
 
@@ -710,7 +760,7 @@ class RerunTopicVisualizer {
             aligned_pose,
             rotation * covariance * rotation.transpose(),
             rgba,
-            1.25f);
+            static_cast<float>(aligned_kimera_uncertainty_scale_));
       }
     }
   }
@@ -733,12 +783,17 @@ class RerunTopicVisualizer {
 
   std::string kimera_odom_topic_;
   std::string liorf_odom_topic_;
+  std::string secondary_entity_prefix_ = "liorf";
+  std::string secondary_frame_name_ = "lidar_link";
   std::string liorf_local_map_topic_;
   std::string liorf_current_scan_topic_;
   std::string kimera_landmarks_topic_;
   std::string recording_id_;
   std::string rerun_host_;
   double publish_rate_hz_ = 5.0;
+  double kimera_uncertainty_scale_ = 1.25;
+  double secondary_uncertainty_scale_ = 1.25;
+  double aligned_kimera_uncertainty_scale_ = 1.25;
   bool uncertainty_enable_ = true;
   bool raw_covariance_enable_ = true;
   bool lag_scalars_enable_ = true;

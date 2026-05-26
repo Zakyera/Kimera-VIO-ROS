@@ -60,6 +60,7 @@
        default="false"/>
   <arg name="cbs_use_persistent_bpsam_for_main_backend" default="false"/>
   <arg name="cbs_log_covariance_sanity_diff" default="false"/>
+  <arg name="cbs_backend_enable" default="true"/>
   <arg name="cbs_enable_soft_reset" default="true"/>
   <arg name="cbs_use_raw_previous_belief_gate" default="false"/>
   <arg name="cbs_reject_first_message" default="true"/>

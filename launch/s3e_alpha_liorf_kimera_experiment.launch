@@ -13,10 +13,16 @@
   <arg name="rerun_factor_graph_enable" default="true"/>
   <arg name="rerun_world_alignment_enable" default="true"/>
   <arg name="rerun_topic_visualizer_publish_rate_hz" default="5.0"/>
+  <arg name="liorf_cbs_backend_mode" default="map_optimization"/>
+  <arg name="liorf_cbs_imu_odometry_topic"
+       default="/liorf/cbs/imu_preintegration/odometry"/>
+  <arg name="liorf_cbs_imu_odometry_publish_enable" default="true"/>
+  <arg name="liorf_imu_correction_factor_mode" default="absolute_prior"/>
+  <arg name="liorf_imu_relative_correction_noise_scale" default="1.0"/>
   <arg name="rerun_topic_visualizer_kimera_odom_topic"
        default="/kimera_vio_ros/odometry"/>
   <arg name="rerun_topic_visualizer_liorf_odom_topic"
-       default="/liorf/mapping/odometry"/>
+       default="$(eval arg('liorf_cbs_imu_odometry_topic') if arg('liorf_cbs_backend_mode') == 'imu_preintegration' else '/liorf/mapping/odometry')"/>
   <arg name="rerun_topic_visualizer_uncertainty_enable" default="true"/>
   <arg name="rerun_topic_visualizer_raw_covariance_enable" default="true"/>
   <arg name="rerun_topic_visualizer_lag_scalars_enable" default="true"/>
@@ -39,7 +45,6 @@
   <arg name="liorf_rerun_local_map_max_points" default="10000"/>
   <arg name="liorf_use_gps" default="false"/>
   <arg name="liorf_initial_yaw_sigma" default="3.141592653589793"/>
-  <arg name="liorf_cbs_backend_mode" default="map_optimization"/>
 
   <arg name="use_kimera_rviz" default="true"/>
   <arg name="use_liorf_rviz" default="false"/>
@@ -81,6 +86,7 @@
        default="false"/>
   <arg name="cbs_use_persistent_bpsam_for_main_backend" default="false"/>
   <arg name="cbs_log_covariance_sanity_diff" default="false"/>
+  <arg name="kimera_cbs_backend_enable" default="true"/>
   <arg name="include_pipeline_flags" default="false"/>
   <arg name="pipeline_flagfile"
        default="$(find kimera_vio)/params/S3EAlphaMonoXfeat/flags/Pipeline.flags"/>
@@ -145,6 +151,14 @@
          value="$(arg liorf_cbs_odom_belief_in_topic)"/>
     <arg name="cbs_odom_belief_out_topic"
          value="$(arg liorf_cbs_odom_belief_out_topic)"/>
+    <arg name="cbs_imu_odometry_topic"
+         value="$(arg liorf_cbs_imu_odometry_topic)"/>
+    <arg name="cbs_imu_odometry_publish_enable"
+         value="$(arg liorf_cbs_imu_odometry_publish_enable)"/>
+    <arg name="imu_correction_factor_mode"
+         value="$(arg liorf_imu_correction_factor_mode)"/>
+    <arg name="imu_relative_correction_noise_scale"
+         value="$(arg liorf_imu_relative_correction_noise_scale)"/>
     <arg name="cbs_belief_exchange_window_size"
          value="$(arg liorf_belief_exchange_window_size)"/>
     <arg name="cbs_odom_sender_mode"
@@ -229,6 +243,8 @@
          value="$(arg cbs_use_persistent_bpsam_for_main_backend)"/>
     <arg name="cbs_log_covariance_sanity_diff"
          value="$(arg cbs_log_covariance_sanity_diff)"/>
+    <arg name="cbs_backend_enable"
+         value="$(arg kimera_cbs_backend_enable)"/>
     <arg name="include_pipeline_flags" value="$(arg include_pipeline_flags)"/>
     <arg name="pipeline_flagfile" value="$(arg pipeline_flagfile)"/>
   </include>
