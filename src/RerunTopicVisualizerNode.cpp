@@ -8,6 +8,7 @@
 #include <gtsam/base/Matrix.h>
 #include <gtsam/geometry/Pose3.h>
 #include <gtsam/geometry/Rot3.h>
+#include <liorf/pose_odom_belief_array.h>
 #include <nav_msgs/Odometry.h>
 #include <ros/ros.h>
 #include <sensor_msgs/PointCloud2.h>
@@ -15,11 +16,14 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <ctime>
 #include <fstream>
 #include <iomanip>
+#include <iterator>
 #include <limits>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <sstream>
@@ -27,6 +31,7 @@
 #include <utility>
 #include <vector>
 #include <Eigen/Eigenvalues>
+#include <Eigen/SVD>
 
 namespace VIO {
 namespace {
@@ -100,6 +105,15 @@ uint64_t stampToNSec(const ros::Time& stamp) {
          static_cast<uint64_t>(stamp.nsec);
 }
 
+uint64_t stampSecToNSec(const double stamp_sec) {
+  if (!std::isfinite(stamp_sec) || stamp_sec <= 0.0) {
+    return 0ull;
+  }
+  return static_cast<uint64_t>(std::llround(stamp_sec * 1.0e9));
+}
+
+double beliefMessageStampSec(const liorf::pose_odom_belief_array& msg);
+
 bool odometryToPose(const nav_msgs::Odometry& odom, gtsam::Pose3* pose) {
   CHECK_NOTNULL(pose);
   const auto& p = odom.pose.pose.position;
@@ -134,6 +148,14 @@ Eigen::Matrix3d translationCovarianceFromPoseCovariance(
     covariance = pose_covariance.block<3, 3>(3, 3);
   }
   return covariance;
+}
+
+gtsam::Matrix6 rotatePoseCovariance6x6(const gtsam::Matrix6& pose_covariance,
+                                       const Eigen::Matrix3d& rotation) {
+  gtsam::Matrix6 transform = gtsam::Matrix6::Zero();
+  transform.block<3, 3>(0, 0) = rotation;
+  transform.block<3, 3>(3, 3) = rotation;
+  return transform * pose_covariance * transform.transpose();
 }
 
 bool isUsableCovariance(const Eigen::Matrix3d& covariance) {
@@ -257,6 +279,25 @@ std::vector<gtsam::Point3> pointCloud2ToPoints(
   return points;
 }
 
+struct CloudState {
+  explicit CloudState(std::string source_name) : name(std::move(source_name)) {}
+
+  std::string name;
+  sensor_msgs::PointCloud2 latest;
+  bool has_latest = false;
+  double last_published_stamp_sec = std::numeric_limits<double>::quiet_NaN();
+};
+
+struct GroundTruthPose {
+  double stamp_sec = std::numeric_limits<double>::quiet_NaN();
+  gtsam::Pose3 pose;
+};
+
+struct TimedPose {
+  double stamp_sec = std::numeric_limits<double>::quiet_NaN();
+  gtsam::Pose3 pose;
+};
+
 struct SourceState {
   explicit SourceState(std::string source_name) : name(std::move(source_name)) {}
 
@@ -266,17 +307,616 @@ struct SourceState {
   double last_stamp_sec = std::numeric_limits<double>::quiet_NaN();
   double stamp_interval_sec = std::numeric_limits<double>::quiet_NaN();
   double last_published_stamp_sec = std::numeric_limits<double>::quiet_NaN();
+  double last_timed_trajectory_stamp_sec =
+      std::numeric_limits<double>::quiet_NaN();
   std::vector<gtsam::Pose3> trajectory;
+  std::vector<TimedPose> timed_trajectory;
 };
 
-struct CloudState {
-  explicit CloudState(std::string source_name) : name(std::move(source_name)) {}
+struct BeliefTrafficStats {
+  size_t beliefs_per_message = 0u;
+  size_t beliefs_total = 0u;
+  size_t messages_total = 0u;
+  double message_stamp_sec = std::numeric_limits<double>::quiet_NaN();
+  double message_interval_sec = std::numeric_limits<double>::quiet_NaN();
+  double edge_duration_mean_sec = std::numeric_limits<double>::quiet_NaN();
+  double edge_duration_min_sec = std::numeric_limits<double>::quiet_NaN();
+  double edge_duration_max_sec = std::numeric_limits<double>::quiet_NaN();
+  double covariance_trace_mean = std::numeric_limits<double>::quiet_NaN();
+  double covariance_frobenius_mean = std::numeric_limits<double>::quiet_NaN();
+  double latest_source_agent = std::numeric_limits<double>::quiet_NaN();
+  double latest_from_stamp_sec = std::numeric_limits<double>::quiet_NaN();
+  double latest_to_stamp_sec = std::numeric_limits<double>::quiet_NaN();
+};
+
+struct AccumulatedBeliefCovarianceState {
+  explicit AccumulatedBeliefCovarianceState(std::string source)
+      : source_name(std::move(source)) {}
+
+  std::string source_name;
+  bool initialized = false;
+  uint32_t chain_start_index = 0u;
+  uint32_t last_to_index = 0u;
+  double chain_start_stamp_sec = std::numeric_limits<double>::quiet_NaN();
+  double last_to_stamp_sec = std::numeric_limits<double>::quiet_NaN();
+  gtsam::Pose3 accumulated_pose;
+  gtsam::Matrix6 accumulated_covariance = gtsam::Matrix6::Zero();
+  size_t accepted_edges = 0u;
+  size_t skipped_duplicate_total = 0u;
+  size_t skipped_noncontiguous_total = 0u;
+  size_t skipped_invalid_total = 0u;
+};
+
+struct AccumulatedBeliefCovarianceSnapshot {
+  std::string source_name;
+  double stamp_sec = std::numeric_limits<double>::quiet_NaN();
+  bool initialized = false;
+  bool has_relative_covariance = false;
+  bool has_accumulated_covariance = false;
+  Eigen::Matrix3d relative_translation_covariance = Eigen::Matrix3d::Zero();
+  Eigen::Matrix3d accumulated_translation_covariance = Eigen::Matrix3d::Zero();
+  double edge_duration_sec = std::numeric_limits<double>::quiet_NaN();
+  double chain_duration_sec = std::numeric_limits<double>::quiet_NaN();
+  uint32_t latest_from_index = 0u;
+  uint32_t latest_to_index = 0u;
+  size_t edge_count = 0u;
+  size_t skipped_duplicate_total = 0u;
+  size_t skipped_noncontiguous_total = 0u;
+  size_t skipped_invalid_total = 0u;
+};
+
+struct BeliefTrafficState {
+  BeliefTrafficState(std::string source_name,
+                     std::string entity_path,
+                     std::string covariance_source_name)
+      : name(std::move(source_name)),
+        entity(std::move(entity_path)),
+        accumulated_covariance(std::move(covariance_source_name)) {}
 
   std::string name;
-  sensor_msgs::PointCloud2 latest;
-  bool has_latest = false;
-  double last_published_stamp_sec = std::numeric_limits<double>::quiet_NaN();
+  std::string entity;
+  AccumulatedBeliefCovarianceState accumulated_covariance;
+  double last_stamp_sec = std::numeric_limits<double>::quiet_NaN();
+  size_t messages_total = 0u;
+  size_t beliefs_total = 0u;
 };
+
+gtsam::Pose3 relativePoseFromBelief(const liorf::pose_odom_belief& belief) {
+  gtsam::Vector6 relative_mu;
+  for (size_t i = 0u; i < 6u; ++i) {
+    relative_mu(i) = belief.relative_mu[i];
+  }
+  return gtsam::Pose3::Expmap(relative_mu);
+}
+
+gtsam::Matrix6 covarianceFromBelief(const liorf::pose_odom_belief& belief) {
+  gtsam::Matrix6 covariance = gtsam::Matrix6::Zero();
+  for (size_t row = 0u; row < 6u; ++row) {
+    for (size_t col = 0u; col < 6u; ++col) {
+      covariance(row, col) = belief.covariance[row * 6u + col];
+    }
+  }
+  return covariance;
+}
+
+bool isFinitePoseCovariance(const gtsam::Matrix6& covariance) {
+  return covariance.allFinite();
+}
+
+gtsam::Matrix6 symmetrizePoseCovariance(const gtsam::Matrix6& covariance) {
+  return 0.5 * (covariance + covariance.transpose());
+}
+
+bool isValidBeliefEdge(const liorf::pose_odom_belief& belief,
+                       gtsam::Pose3* relative_pose,
+                       gtsam::Matrix6* covariance) {
+  CHECK_NOTNULL(relative_pose);
+  CHECK_NOTNULL(covariance);
+  if (belief.to_pose_index <= belief.from_pose_index ||
+      !std::isfinite(belief.from_stamp_sec) ||
+      !std::isfinite(belief.to_stamp_sec) ||
+      belief.to_stamp_sec < belief.from_stamp_sec) {
+    return false;
+  }
+
+  for (size_t i = 0u; i < 6u; ++i) {
+    if (!std::isfinite(belief.relative_mu[i])) {
+      return false;
+    }
+  }
+
+  *relative_pose = relativePoseFromBelief(belief);
+  if (!relative_pose->matrix().allFinite()) {
+    return false;
+  }
+
+  *covariance = symmetrizePoseCovariance(covarianceFromBelief(belief));
+  return isFinitePoseCovariance(*covariance);
+}
+
+AccumulatedBeliefCovarianceSnapshot makeAccumulatedCovarianceSnapshot(
+    const AccumulatedBeliefCovarianceState& state,
+    const double stamp_sec) {
+  AccumulatedBeliefCovarianceSnapshot snapshot;
+  snapshot.source_name = state.source_name;
+  snapshot.stamp_sec = stamp_sec;
+  snapshot.initialized = state.initialized;
+  snapshot.edge_count = state.accepted_edges;
+  snapshot.skipped_duplicate_total = state.skipped_duplicate_total;
+  snapshot.skipped_noncontiguous_total = state.skipped_noncontiguous_total;
+  snapshot.skipped_invalid_total = state.skipped_invalid_total;
+  snapshot.latest_to_index = state.last_to_index;
+  if (state.initialized && std::isfinite(state.chain_start_stamp_sec) &&
+      std::isfinite(state.last_to_stamp_sec)) {
+    snapshot.chain_duration_sec =
+        state.last_to_stamp_sec - state.chain_start_stamp_sec;
+  }
+  return snapshot;
+}
+
+void appendAccumulatedBeliefCovarianceSnapshots(
+    const liorf::pose_odom_belief_array& msg,
+    AccumulatedBeliefCovarianceState* state,
+    std::vector<AccumulatedBeliefCovarianceSnapshot>* snapshots) {
+  CHECK_NOTNULL(state);
+  CHECK_NOTNULL(snapshots);
+
+  std::vector<const liorf::pose_odom_belief*> beliefs;
+  beliefs.reserve(msg.beliefs.size());
+  for (const auto& belief : msg.beliefs) {
+    beliefs.push_back(&belief);
+  }
+  std::sort(beliefs.begin(),
+            beliefs.end(),
+            [](const liorf::pose_odom_belief* lhs,
+               const liorf::pose_odom_belief* rhs) {
+              if (lhs->from_pose_index != rhs->from_pose_index) {
+                return lhs->from_pose_index < rhs->from_pose_index;
+              }
+              return lhs->to_pose_index < rhs->to_pose_index;
+            });
+
+  for (const liorf::pose_odom_belief* belief_ptr : beliefs) {
+    const liorf::pose_odom_belief& belief = *belief_ptr;
+    gtsam::Pose3 relative_pose;
+    gtsam::Matrix6 relative_covariance = gtsam::Matrix6::Zero();
+    if (!isValidBeliefEdge(belief, &relative_pose, &relative_covariance)) {
+      ++state->skipped_invalid_total;
+      continue;
+    }
+
+    if (state->initialized) {
+      if (belief.to_pose_index <= state->last_to_index ||
+          belief.from_pose_index < state->last_to_index) {
+        ++state->skipped_duplicate_total;
+        continue;
+      }
+      if (belief.from_pose_index != state->last_to_index) {
+        ++state->skipped_noncontiguous_total;
+        continue;
+      }
+
+      const gtsam::Matrix6 adjoint =
+          relative_pose.inverse().AdjointMap();
+      state->accumulated_covariance =
+          symmetrizePoseCovariance(adjoint * state->accumulated_covariance *
+                                       adjoint.transpose() +
+                                   relative_covariance);
+      state->accumulated_pose = state->accumulated_pose.compose(relative_pose);
+      state->last_to_index = belief.to_pose_index;
+      state->last_to_stamp_sec = belief.to_stamp_sec;
+      ++state->accepted_edges;
+    } else {
+      state->initialized = true;
+      state->chain_start_index = belief.from_pose_index;
+      state->last_to_index = belief.to_pose_index;
+      state->chain_start_stamp_sec = belief.from_stamp_sec;
+      state->last_to_stamp_sec = belief.to_stamp_sec;
+      state->accumulated_pose = relative_pose;
+      state->accumulated_covariance = relative_covariance;
+      state->accepted_edges = 1u;
+    }
+
+    AccumulatedBeliefCovarianceSnapshot snapshot =
+        makeAccumulatedCovarianceSnapshot(*state, belief.to_stamp_sec);
+    snapshot.has_relative_covariance = true;
+    snapshot.has_accumulated_covariance = true;
+    snapshot.relative_translation_covariance =
+        translationCovarianceFromPoseCovariance(relative_covariance);
+    snapshot.accumulated_translation_covariance =
+        translationCovarianceFromPoseCovariance(state->accumulated_covariance);
+    snapshot.edge_duration_sec = belief.to_stamp_sec - belief.from_stamp_sec;
+    snapshot.latest_from_index = belief.from_pose_index;
+    snapshot.latest_to_index = belief.to_pose_index;
+    snapshots->push_back(snapshot);
+  }
+
+  snapshots->push_back(
+      makeAccumulatedCovarianceSnapshot(*state, beliefMessageStampSec(msg)));
+}
+
+double beliefMessageStampSec(const liorf::pose_odom_belief_array& msg) {
+  const double header_stamp_sec = msg.header.stamp.toSec();
+  if (std::isfinite(header_stamp_sec) && header_stamp_sec > 0.0) {
+    return header_stamp_sec;
+  }
+
+  double latest_belief_stamp_sec = std::numeric_limits<double>::quiet_NaN();
+  for (const auto& belief : msg.beliefs) {
+    const double to_stamp_sec =
+        belief.to_stamp_sec > 0.0 ? belief.to_stamp_sec
+                                  : belief.header.stamp.toSec();
+    if (std::isfinite(to_stamp_sec) && to_stamp_sec > 0.0 &&
+        (!std::isfinite(latest_belief_stamp_sec) ||
+         to_stamp_sec > latest_belief_stamp_sec)) {
+      latest_belief_stamp_sec = to_stamp_sec;
+    }
+  }
+  if (std::isfinite(latest_belief_stamp_sec)) {
+    return latest_belief_stamp_sec;
+  }
+
+  return ros::Time::now().toSec();
+}
+
+BeliefTrafficStats summarizeBeliefTraffic(
+    const liorf::pose_odom_belief_array& msg,
+    BeliefTrafficState* state) {
+  CHECK_NOTNULL(state);
+  BeliefTrafficStats stats;
+  stats.beliefs_per_message = msg.beliefs.size();
+  stats.message_stamp_sec = beliefMessageStampSec(msg);
+  if (std::isfinite(state->last_stamp_sec)) {
+    stats.message_interval_sec = stats.message_stamp_sec - state->last_stamp_sec;
+  }
+  state->last_stamp_sec = stats.message_stamp_sec;
+  ++state->messages_total;
+  state->beliefs_total += stats.beliefs_per_message;
+  stats.messages_total = state->messages_total;
+  stats.beliefs_total = state->beliefs_total;
+
+  double duration_sum = 0.0;
+  double duration_min = std::numeric_limits<double>::infinity();
+  double duration_max = -std::numeric_limits<double>::infinity();
+  size_t duration_count = 0u;
+  double covariance_trace_sum = 0.0;
+  double covariance_frobenius_sum = 0.0;
+  size_t covariance_count = 0u;
+
+  for (const auto& belief : msg.beliefs) {
+    const double to_stamp_sec =
+        belief.to_stamp_sec > 0.0 ? belief.to_stamp_sec
+                                  : belief.header.stamp.toSec();
+    const double from_stamp_sec = belief.from_stamp_sec;
+    if (std::isfinite(from_stamp_sec) && std::isfinite(to_stamp_sec) &&
+        to_stamp_sec >= from_stamp_sec) {
+      const double duration_sec = to_stamp_sec - from_stamp_sec;
+      duration_sum += duration_sec;
+      duration_min = std::min(duration_min, duration_sec);
+      duration_max = std::max(duration_max, duration_sec);
+      ++duration_count;
+    }
+
+    bool covariance_finite = true;
+    double trace = 0.0;
+    double squared_norm = 0.0;
+    for (size_t row = 0u; row < 6u; ++row) {
+      for (size_t col = 0u; col < 6u; ++col) {
+        const double value = belief.covariance[row * 6u + col];
+        covariance_finite = covariance_finite && std::isfinite(value);
+        squared_norm += value * value;
+        if (row == col) {
+          trace += value;
+        }
+      }
+    }
+    if (covariance_finite) {
+      covariance_trace_sum += trace;
+      covariance_frobenius_sum += std::sqrt(squared_norm);
+      ++covariance_count;
+    }
+
+    stats.latest_source_agent = static_cast<double>(belief.source_agent);
+    stats.latest_from_stamp_sec = from_stamp_sec;
+    stats.latest_to_stamp_sec = to_stamp_sec;
+  }
+
+  if (duration_count > 0u) {
+    stats.edge_duration_mean_sec =
+        duration_sum / static_cast<double>(duration_count);
+    stats.edge_duration_min_sec = duration_min;
+    stats.edge_duration_max_sec = duration_max;
+  }
+  if (covariance_count > 0u) {
+    stats.covariance_trace_mean =
+        covariance_trace_sum / static_cast<double>(covariance_count);
+    stats.covariance_frobenius_mean =
+        covariance_frobenius_sum / static_cast<double>(covariance_count);
+  }
+
+  return stats;
+}
+
+bool loadGroundTruthTrajectory(const std::string& path,
+                               std::vector<GroundTruthPose>* poses) {
+  CHECK_NOTNULL(poses);
+  poses->clear();
+  if (path.empty()) {
+    return false;
+  }
+
+  std::ifstream file(path);
+  if (!file.is_open()) {
+    LOG(WARNING) << "Could not open Rerun ground-truth trajectory: " << path;
+    return false;
+  }
+
+  std::string line;
+  size_t line_number = 0u;
+  while (std::getline(file, line)) {
+    ++line_number;
+    if (line.empty() || line.front() == '#') {
+      continue;
+    }
+
+    std::istringstream iss(line);
+    double stamp_sec = 0.0;
+    double x = 0.0;
+    double y = 0.0;
+    double z = 0.0;
+    double qx = 0.0;
+    double qy = 0.0;
+    double qz = 0.0;
+    double qw = 1.0;
+    if (!(iss >> stamp_sec >> x >> y >> z >> qx >> qy >> qz >> qw)) {
+      LOG(WARNING) << "Skipping malformed Rerun ground-truth row "
+                   << line_number << " in " << path;
+      continue;
+    }
+
+    const double q_norm =
+        std::sqrt(qw * qw + qx * qx + qy * qy + qz * qz);
+    if (!std::isfinite(stamp_sec) || !std::isfinite(x) ||
+        !std::isfinite(y) || !std::isfinite(z) || !std::isfinite(q_norm) ||
+        q_norm < kMinQuaternionNorm) {
+      continue;
+    }
+
+    poses->push_back(
+        {stamp_sec,
+         gtsam::Pose3(gtsam::Rot3::Quaternion(qw / q_norm,
+                                              qx / q_norm,
+                                              qy / q_norm,
+                                              qz / q_norm),
+                      gtsam::Point3(x, y, z))});
+  }
+
+  std::sort(poses->begin(),
+            poses->end(),
+            [](const GroundTruthPose& lhs, const GroundTruthPose& rhs) {
+              return lhs.stamp_sec < rhs.stamp_sec;
+            });
+
+  if (poses->empty()) {
+    LOG(WARNING) << "No valid Rerun ground-truth poses loaded from " << path;
+    return false;
+  }
+
+  LOG(INFO) << "Loaded " << poses->size()
+            << " Rerun ground-truth poses from " << path << ".";
+  return true;
+}
+
+double pathLength2D(const std::vector<gtsam::Point3>& points) {
+  if (points.size() < 2u) {
+    return 0.0;
+  }
+
+  double length = 0.0;
+  for (size_t i = 1u; i < points.size(); ++i) {
+    const double dx = points[i].x() - points[i - 1u].x();
+    const double dy = points[i].y() - points[i - 1u].y();
+    length += std::hypot(dx, dy);
+  }
+  return length;
+}
+
+struct AlignmentEstimate {
+  gtsam::Pose3 target_T_source;
+  double rmse_m = std::numeric_limits<double>::quiet_NaN();
+  double mean_m = std::numeric_limits<double>::quiet_NaN();
+  double max_m = std::numeric_limits<double>::quiet_NaN();
+  double determinant = std::numeric_limits<double>::quiet_NaN();
+};
+
+struct Se2AlignmentEstimate {
+  double yaw_rad = 0.0;
+  gtsam::Point3 translation = gtsam::Point3(0.0, 0.0, 0.0);
+  double rmse_m = std::numeric_limits<double>::quiet_NaN();
+  double mean_m = std::numeric_limits<double>::quiet_NaN();
+  double max_m = std::numeric_limits<double>::quiet_NaN();
+};
+
+bool estimateSe3Alignment(const std::vector<gtsam::Point3>& source_points,
+                          const std::vector<gtsam::Point3>& target_points,
+                          AlignmentEstimate* estimate) {
+  CHECK_NOTNULL(estimate);
+  if (source_points.size() != target_points.size() ||
+      source_points.size() < 3u) {
+    return false;
+  }
+
+  Eigen::Vector3d source_mean = Eigen::Vector3d::Zero();
+  Eigen::Vector3d target_mean = Eigen::Vector3d::Zero();
+  for (size_t i = 0u; i < source_points.size(); ++i) {
+    source_mean += Eigen::Vector3d(source_points[i].x(),
+                                   source_points[i].y(),
+                                   source_points[i].z());
+    target_mean += Eigen::Vector3d(target_points[i].x(),
+                                   target_points[i].y(),
+                                   target_points[i].z());
+  }
+
+  const double inv_count = 1.0 / static_cast<double>(source_points.size());
+  source_mean *= inv_count;
+  target_mean *= inv_count;
+
+  Eigen::Matrix3d covariance = Eigen::Matrix3d::Zero();
+  for (size_t i = 0u; i < source_points.size(); ++i) {
+    const Eigen::Vector3d source_centered =
+        Eigen::Vector3d(source_points[i].x(),
+                        source_points[i].y(),
+                        source_points[i].z()) -
+        source_mean;
+    const Eigen::Vector3d target_centered =
+        Eigen::Vector3d(target_points[i].x(),
+                        target_points[i].y(),
+                        target_points[i].z()) -
+        target_mean;
+    covariance += source_centered * target_centered.transpose();
+  }
+
+  if (!covariance.allFinite() || covariance.norm() < 1e-9) {
+    return false;
+  }
+
+  Eigen::JacobiSVD<Eigen::Matrix3d> svd(
+      covariance, Eigen::ComputeFullU | Eigen::ComputeFullV);
+  if (svd.info() != Eigen::Success) {
+    return false;
+  }
+
+  Eigen::Matrix3d u = svd.matrixU();
+  Eigen::Matrix3d v = svd.matrixV();
+  Eigen::Matrix3d rotation = v * u.transpose();
+  if (rotation.determinant() < 0.0) {
+    v.col(2) *= -1.0;
+    rotation = v * u.transpose();
+  }
+  if (!rotation.allFinite()) {
+    return false;
+  }
+
+  const Eigen::Vector3d translation = target_mean - rotation * source_mean;
+  estimate->target_T_source =
+      gtsam::Pose3(gtsam::Rot3(rotation),
+                   gtsam::Point3(translation.x(),
+                                 translation.y(),
+                                 translation.z()));
+  estimate->determinant = rotation.determinant();
+
+  double squared_error_sum = 0.0;
+  double error_sum = 0.0;
+  double max_error = 0.0;
+  for (size_t i = 0u; i < source_points.size(); ++i) {
+    const Eigen::Vector3d source(source_points[i].x(),
+                                 source_points[i].y(),
+                                 source_points[i].z());
+    const Eigen::Vector3d target(target_points[i].x(),
+                                 target_points[i].y(),
+                                 target_points[i].z());
+    const double error = (rotation * source + translation - target).norm();
+    squared_error_sum += error * error;
+    error_sum += error;
+    max_error = std::max(max_error, error);
+  }
+  estimate->rmse_m =
+      std::sqrt(squared_error_sum / static_cast<double>(source_points.size()));
+  estimate->mean_m = error_sum / static_cast<double>(source_points.size());
+  estimate->max_m = max_error;
+  return true;
+}
+
+bool estimateSe2Alignment(const std::vector<gtsam::Point3>& source_points,
+                          const std::vector<gtsam::Point3>& target_points,
+                          Se2AlignmentEstimate* estimate) {
+  CHECK_NOTNULL(estimate);
+  if (source_points.size() != target_points.size() ||
+      source_points.size() < 2u) {
+    return false;
+  }
+
+  Eigen::Vector3d source_mean = Eigen::Vector3d::Zero();
+  Eigen::Vector3d target_mean = Eigen::Vector3d::Zero();
+  for (size_t i = 0u; i < source_points.size(); ++i) {
+    source_mean += Eigen::Vector3d(source_points[i].x(),
+                                   source_points[i].y(),
+                                   source_points[i].z());
+    target_mean += Eigen::Vector3d(target_points[i].x(),
+                                   target_points[i].y(),
+                                   target_points[i].z());
+  }
+  const double inv_count = 1.0 / static_cast<double>(source_points.size());
+  source_mean *= inv_count;
+  target_mean *= inv_count;
+
+  double a = 0.0;
+  double b = 0.0;
+  for (size_t i = 0u; i < source_points.size(); ++i) {
+    const double sx = source_points[i].x() - source_mean.x();
+    const double sy = source_points[i].y() - source_mean.y();
+    const double tx = target_points[i].x() - target_mean.x();
+    const double ty = target_points[i].y() - target_mean.y();
+    a += sx * tx + sy * ty;
+    b += sx * ty - sy * tx;
+  }
+  if (!std::isfinite(a) || !std::isfinite(b) ||
+      std::hypot(a, b) < 1e-9) {
+    return false;
+  }
+
+  const double yaw = std::atan2(b, a);
+  const double c = std::cos(yaw);
+  const double s = std::sin(yaw);
+  const Eigen::Vector3d rotated_source_mean(c * source_mean.x() -
+                                                s * source_mean.y(),
+                                            s * source_mean.x() +
+                                                c * source_mean.y(),
+                                            source_mean.z());
+  const Eigen::Vector3d translation = target_mean - rotated_source_mean;
+
+  double squared_error_sum = 0.0;
+  double error_sum = 0.0;
+  double max_error = 0.0;
+  for (size_t i = 0u; i < source_points.size(); ++i) {
+    const Eigen::Vector3d source(source_points[i].x(),
+                                 source_points[i].y(),
+                                 source_points[i].z());
+    const Eigen::Vector3d target(target_points[i].x(),
+                                 target_points[i].y(),
+                                 target_points[i].z());
+    const Eigen::Vector3d aligned(c * source.x() - s * source.y(),
+                                  s * source.x() + c * source.y(),
+                                  source.z());
+    const double error = (aligned + translation - target).norm();
+    squared_error_sum += error * error;
+    error_sum += error;
+    max_error = std::max(max_error, error);
+  }
+
+  estimate->yaw_rad = yaw;
+  estimate->translation =
+      gtsam::Point3(translation.x(), translation.y(), translation.z());
+  estimate->rmse_m =
+      std::sqrt(squared_error_sum / static_cast<double>(source_points.size()));
+  estimate->mean_m = error_sum / static_cast<double>(source_points.size());
+  estimate->max_m = max_error;
+  return true;
+}
+
+gtsam::Pose3 transformPoseSe2(const gtsam::Pose3& pose,
+                              const Se2AlignmentEstimate& alignment,
+                              const gtsam::Point3& origin) {
+  const gtsam::Rot3 yaw_rotation = gtsam::Rot3::Rz(alignment.yaw_rad);
+  const Eigen::Vector3d translation(alignment.translation.x(),
+                                    alignment.translation.y(),
+                                    alignment.translation.z());
+  const Eigen::Vector3d origin_v(origin.x(), origin.y(), origin.z());
+  const Eigen::Vector3d p = yaw_rotation.matrix() * pose.translation() +
+                            translation - origin_v;
+  return gtsam::Pose3(yaw_rotation.compose(pose.rotation()),
+                      gtsam::Point3(p.x(), p.y(), p.z()));
+}
 
 class RerunTopicVisualizer {
  public:
@@ -287,6 +927,8 @@ class RerunTopicVisualizer {
         liorf_local_map_("liorf_local_map"),
         liorf_current_scan_("liorf_current_scan"),
         kimera_landmarks_("kimera_landmarks"),
+        cbs_g2k_("glim_to_kimera", "cbs/g2k", "glim_sent"),
+        cbs_k2g_("kimera_to_glim", "cbs/k2g", "kimera_sent"),
         visualizer_(nullptr) {
     private_nh_.param<std::string>(
         "kimera_odom_topic", kimera_odom_topic_, "/kimera_vio_ros/odometry");
@@ -349,6 +991,45 @@ class RerunTopicVisualizer {
                                    "/kimera_vio_ros/landmarks");
     private_nh_.param<int>(
         "kimera_landmarks_max_points", kimera_landmarks_max_points_, 3000);
+    private_nh_.param<bool>(
+        "cbs_metrics_enable", cbs_metrics_enable_, false);
+    private_nh_.param<bool>("accumulated_covariance_enable",
+                            accumulated_covariance_enable_,
+                            true);
+    private_nh_.param<bool>(
+        "publish_raw_kimera_enable", publish_raw_kimera_enable_, true);
+    private_nh_.param<bool>(
+        "publish_secondary_enable", publish_secondary_enable_, true);
+    private_nh_.param<bool>("publish_aligned_kimera_enable",
+                            publish_aligned_kimera_enable_,
+                            true);
+    private_nh_.param<bool>("publish_legacy_online_alignment_enable",
+                            publish_legacy_online_alignment_enable_,
+                            false);
+    private_nh_.param<std::string>("cbs_g2k_odom_belief_topic",
+                                   cbs_g2k_odom_belief_topic_,
+                                   "/kimera/cbs/odom_belief_in");
+    private_nh_.param<std::string>("cbs_k2g_odom_belief_topic",
+                                   cbs_k2g_odom_belief_topic_,
+                                   "/kimera/cbs/odom_belief_out");
+    private_nh_.param<bool>(
+        "ground_truth_enable", ground_truth_enable_, false);
+    private_nh_.param<bool>("publish_common_aligned_overlay_enable",
+                            publish_common_aligned_overlay_enable_,
+                            true);
+    private_nh_.param<std::string>("ground_truth_path", ground_truth_path_, "");
+    private_nh_.param<double>("ground_truth_max_timestamp_diff_sec",
+                              ground_truth_max_timestamp_diff_sec_,
+                              0.75);
+    private_nh_.param<int>("ground_truth_alignment_min_pairs",
+                           ground_truth_alignment_min_pairs_,
+                           8);
+    private_nh_.param<double>("ground_truth_alignment_min_path_length_m",
+                              ground_truth_alignment_min_path_length_m_,
+                              3.0);
+    private_nh_.param<double>("ground_truth_window_duration_sec",
+                              ground_truth_window_duration_sec_,
+                              60.0);
     private_nh_.param<std::string>("rerun_recording_id", recording_id_, "");
     private_nh_.param<std::string>("rerun_host", rerun_host_, "auto");
 
@@ -357,6 +1038,8 @@ class RerunTopicVisualizer {
                    << "; falling back to 5 Hz.";
       publish_rate_hz_ = 5.0;
     }
+    ground_truth_alignment_min_pairs_ =
+        std::max(2, ground_truth_alignment_min_pairs_);
     max_trajectory_len_ = std::max(2, max_trajectory_len_);
 
     if (recording_id_.empty()) {
@@ -373,6 +1056,10 @@ class RerunTopicVisualizer {
 
     visualizer_ = std::make_unique<RosRerunVisualizer>(
         "cbsms", recording_id_, rerun_host_);
+    if (ground_truth_enable_) {
+      ground_truth_loaded_ =
+          loadGroundTruthTrajectory(ground_truth_path_, &ground_truth_);
+    }
 
     kimera_sub_ = nh_.subscribe<nav_msgs::Odometry>(
         kimera_odom_topic_,
@@ -408,6 +1095,20 @@ class RerunTopicVisualizer {
           this,
           ros::TransportHints().tcpNoDelay());
     }
+    if (cbs_metrics_enable_) {
+      cbs_g2k_sub_ = nh_.subscribe<liorf::pose_odom_belief_array>(
+          cbs_g2k_odom_belief_topic_,
+          50,
+          &RerunTopicVisualizer::cbsG2kCallback,
+          this,
+          ros::TransportHints().tcpNoDelay());
+      cbs_k2g_sub_ = nh_.subscribe<liorf::pose_odom_belief_array>(
+          cbs_k2g_odom_belief_topic_,
+          50,
+          &RerunTopicVisualizer::cbsK2gCallback,
+          this,
+          ros::TransportHints().tcpNoDelay());
+    }
     timer_ = nh_.createWallTimer(
         ros::WallDuration(1.0 / publish_rate_hz_),
         &RerunTopicVisualizer::publishLatest,
@@ -423,7 +1124,35 @@ class RerunTopicVisualizer {
               << ", liorf_point_clouds_enable="
               << (liorf_point_clouds_enable_ ? "true" : "false")
               << ", kimera_landmarks_enable="
-              << (kimera_landmarks_enable_ ? "true" : "false") << ".";
+              << (kimera_landmarks_enable_ ? "true" : "false")
+              << ", cbs_metrics_enable="
+              << (cbs_metrics_enable_ ? "true" : "false")
+              << ", accumulated_covariance_enable="
+              << (accumulated_covariance_enable_ ? "true" : "false")
+              << ", cbs_g2k_odom_belief_topic='"
+              << cbs_g2k_odom_belief_topic_
+              << "', cbs_k2g_odom_belief_topic='"
+              << cbs_k2g_odom_belief_topic_
+              << "', publish_raw_kimera_enable="
+              << (publish_raw_kimera_enable_ ? "true" : "false")
+              << ", publish_secondary_enable="
+              << (publish_secondary_enable_ ? "true" : "false")
+              << ", publish_aligned_kimera_enable="
+              << (publish_aligned_kimera_enable_ ? "true" : "false")
+              << ", publish_legacy_online_alignment_enable="
+              << (publish_legacy_online_alignment_enable_ ? "true" : "false")
+              << ", ground_truth_enable="
+              << (ground_truth_enable_ ? "true" : "false")
+              << ", ground_truth_loaded="
+              << (ground_truth_loaded_ ? "true" : "false")
+              << ", publish_common_aligned_overlay_enable="
+              << (publish_common_aligned_overlay_enable_ ? "true" : "false")
+              << ", ground_truth_alignment_min_pairs="
+              << ground_truth_alignment_min_pairs_
+              << ", ground_truth_alignment_min_path_length_m="
+              << ground_truth_alignment_min_path_length_m_
+              << ", ground_truth_window_duration_sec="
+              << ground_truth_window_duration_sec_ << ".";
   }
 
  private:
@@ -447,6 +1176,14 @@ class RerunTopicVisualizer {
     updateCloud(msg, &kimera_landmarks_);
   }
 
+  void cbsG2kCallback(const liorf::pose_odom_belief_arrayConstPtr& msg) {
+    updateBeliefTraffic(msg, &cbs_g2k_);
+  }
+
+  void cbsK2gCallback(const liorf::pose_odom_belief_arrayConstPtr& msg) {
+    updateBeliefTraffic(msg, &cbs_k2g_);
+  }
+
   void updateSource(const nav_msgs::Odometry::ConstPtr& msg,
                     SourceState* source) {
     CHECK_NOTNULL(msg);
@@ -459,6 +1196,22 @@ class RerunTopicVisualizer {
     source->last_stamp_sec = stamp_sec;
     source->latest = *msg;
     source->has_latest = true;
+
+    gtsam::Pose3 pose;
+    if (odometryToPose(*msg, &pose) &&
+        (!std::isfinite(source->last_timed_trajectory_stamp_sec) ||
+         stamp_sec > source->last_timed_trajectory_stamp_sec)) {
+      source->timed_trajectory.push_back({stamp_sec, pose});
+      source->last_timed_trajectory_stamp_sec = stamp_sec;
+      if (source->timed_trajectory.size() >
+          static_cast<size_t>(max_trajectory_len_)) {
+        const size_t extra = source->timed_trajectory.size() -
+                             static_cast<size_t>(max_trajectory_len_);
+        source->timed_trajectory.erase(
+            source->timed_trajectory.begin(),
+            source->timed_trajectory.begin() + extra);
+      }
+    }
   }
 
   void updateCloud(const sensor_msgs::PointCloud2::ConstPtr& msg,
@@ -468,6 +1221,262 @@ class RerunTopicVisualizer {
     std::lock_guard<std::mutex> lock(mutex_);
     cloud->latest = *msg;
     cloud->has_latest = true;
+  }
+
+  void updateBeliefTraffic(const liorf::pose_odom_belief_arrayConstPtr& msg,
+                           BeliefTrafficState* state) {
+    if (!msg || !state) {
+      return;
+    }
+
+    BeliefTrafficStats stats;
+    std::vector<AccumulatedBeliefCovarianceSnapshot> covariance_snapshots;
+    std::string entity;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      stats = summarizeBeliefTraffic(*msg, state);
+      if (accumulated_covariance_enable_) {
+        appendAccumulatedBeliefCovarianceSnapshots(
+            *msg, &state->accumulated_covariance, &covariance_snapshots);
+      }
+      entity = state->entity;
+    }
+    publishBeliefTraffic(entity, stats);
+    for (const AccumulatedBeliefCovarianceSnapshot& snapshot :
+         covariance_snapshots) {
+      publishAccumulatedBeliefCovariance(snapshot);
+    }
+  }
+
+  void publishBeliefTraffic(const std::string& entity,
+                            const BeliefTrafficStats& stats) {
+    const uint64_t stamp_nsec = stampSecToNSec(stats.message_stamp_sec);
+    if (stamp_nsec > 0ull) {
+      visualizer_->setTimeNSec(stamp_nsec);
+    }
+    visualizer_->drawScalar(entity + "/beliefs_per_message",
+                            static_cast<double>(stats.beliefs_per_message));
+    visualizer_->drawScalar(entity + "/beliefs_total",
+                            static_cast<double>(stats.beliefs_total));
+    visualizer_->drawScalar(entity + "/messages_total",
+                            static_cast<double>(stats.messages_total));
+
+    drawFiniteScalar(entity + "/message_stamp_sec", stats.message_stamp_sec);
+    drawFiniteScalar(entity + "/message_interval_sec",
+                     stats.message_interval_sec);
+    drawFiniteScalar(entity + "/edge_duration_mean_sec",
+                     stats.edge_duration_mean_sec);
+    drawFiniteScalar(entity + "/edge_duration_min_sec",
+                     stats.edge_duration_min_sec);
+    drawFiniteScalar(entity + "/edge_duration_max_sec",
+                     stats.edge_duration_max_sec);
+    drawFiniteScalar(entity + "/covariance_trace_mean",
+                     stats.covariance_trace_mean);
+    drawFiniteScalar(entity + "/covariance_frobenius_mean",
+                     stats.covariance_frobenius_mean);
+    drawFiniteScalar(entity + "/latest_source_agent",
+                     stats.latest_source_agent);
+    drawFiniteScalar(entity + "/latest_from_stamp_sec",
+                     stats.latest_from_stamp_sec);
+    drawFiniteScalar(entity + "/latest_to_stamp_sec",
+                     stats.latest_to_stamp_sec);
+  }
+
+  void drawFiniteScalar(const std::string& path, const double value) {
+    if (std::isfinite(value)) {
+      visualizer_->drawScalar(path, value);
+    }
+  }
+
+  void publishTranslationCovarianceMetrics(
+      const std::string& base_path,
+      const Eigen::Matrix3d& translation_covariance,
+      const std::string& metric_prefix) {
+    if (!isUsableCovariance(translation_covariance)) {
+      return;
+    }
+
+    const double trace_m2 = translation_covariance.trace();
+    const double frobenius_m2 = translation_covariance.norm();
+    const Eigen::Matrix3d symmetric_covariance =
+        0.5 * (translation_covariance + translation_covariance.transpose());
+    const Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> eig(
+        symmetric_covariance);
+
+    drawFiniteScalar(base_path + "/" + metric_prefix + "translation_trace_m2",
+                     trace_m2);
+    drawFiniteScalar(base_path + "/" + metric_prefix + "translation_trace_cm2",
+                     trace_m2 * 1.0e4);
+    drawFiniteScalar(base_path + "/" + metric_prefix +
+                         "translation_frobenius_m2",
+                     frobenius_m2);
+    drawFiniteScalar(base_path + "/" + metric_prefix +
+                         "translation_frobenius_cm2",
+                     frobenius_m2 * 1.0e4);
+    if (trace_m2 > 0.0) {
+      drawFiniteScalar(base_path + "/" + metric_prefix +
+                           "translation_trace_log10_m2",
+                       std::log10(trace_m2));
+    }
+
+    const double sigma_x_cm =
+        std::sqrt(std::max(0.0, translation_covariance(0, 0))) * 100.0;
+    const double sigma_y_cm =
+        std::sqrt(std::max(0.0, translation_covariance(1, 1))) * 100.0;
+    const double sigma_z_cm =
+        std::sqrt(std::max(0.0, translation_covariance(2, 2))) * 100.0;
+    drawFiniteScalar(base_path + "/" + metric_prefix + "sigma_x_cm",
+                     sigma_x_cm);
+    drawFiniteScalar(base_path + "/" + metric_prefix + "sigma_y_cm",
+                     sigma_y_cm);
+    drawFiniteScalar(base_path + "/" + metric_prefix + "sigma_z_cm",
+                     sigma_z_cm);
+    drawFiniteScalar(base_path + "/" + metric_prefix + "sigma_mean_cm",
+                     (sigma_x_cm + sigma_y_cm + sigma_z_cm) / 3.0);
+
+    if (eig.info() == Eigen::Success) {
+      const auto eigenvalues = eig.eigenvalues();
+      drawFiniteScalar(base_path + "/" + metric_prefix + "sigma_min_cm",
+                       std::sqrt(std::max(0.0, eigenvalues.minCoeff())) *
+                           100.0);
+      drawFiniteScalar(base_path + "/" + metric_prefix + "sigma_max_cm",
+                       std::sqrt(std::max(0.0, eigenvalues.maxCoeff())) *
+                           100.0);
+    }
+  }
+
+  void publishAccumulatedBeliefCovariance(
+      const AccumulatedBeliefCovarianceSnapshot& snapshot) {
+    const uint64_t stamp_nsec = stampSecToNSec(snapshot.stamp_sec);
+    if (stamp_nsec > 0ull) {
+      visualizer_->setTimeNSec(stamp_nsec);
+    }
+
+    const std::string accumulated_base =
+        "metrics/accumulated_covariance/" + snapshot.source_name;
+    visualizer_->drawScalar(accumulated_base + "/initialized",
+                            snapshot.initialized ? 1.0 : 0.0);
+    visualizer_->drawScalar(accumulated_base + "/edge_count",
+                            static_cast<double>(snapshot.edge_count));
+    visualizer_->drawScalar(
+        accumulated_base + "/skipped_duplicate_total",
+        static_cast<double>(snapshot.skipped_duplicate_total));
+    visualizer_->drawScalar(
+        accumulated_base + "/skipped_noncontiguous_total",
+        static_cast<double>(snapshot.skipped_noncontiguous_total));
+    visualizer_->drawScalar(
+        accumulated_base + "/skipped_invalid_total",
+        static_cast<double>(snapshot.skipped_invalid_total));
+    drawFiniteScalar(accumulated_base + "/chain_duration_sec",
+                     snapshot.chain_duration_sec);
+    visualizer_->drawScalar(accumulated_base + "/latest_to_index",
+                            static_cast<double>(snapshot.latest_to_index));
+    if (snapshot.has_accumulated_covariance) {
+      publishTranslationCovarianceMetrics(
+          accumulated_base, snapshot.accumulated_translation_covariance, "");
+    }
+
+    if (!snapshot.has_relative_covariance) {
+      return;
+    }
+
+    const std::string relative_base =
+        "metrics/relative_belief_covariance/" + snapshot.source_name;
+    visualizer_->drawScalar(relative_base + "/latest_from_index",
+                            static_cast<double>(snapshot.latest_from_index));
+    visualizer_->drawScalar(relative_base + "/latest_to_index",
+                            static_cast<double>(snapshot.latest_to_index));
+    drawFiniteScalar(relative_base + "/latest_edge_duration_sec",
+                     snapshot.edge_duration_sec);
+    publishTranslationCovarianceMetrics(
+        relative_base, snapshot.relative_translation_covariance, "latest_");
+  }
+
+  void publishPosteriorCovarianceMetrics(
+      const std::string& source_name,
+      const Eigen::Matrix3d& translation_covariance) {
+    if (!isUsableCovariance(translation_covariance)) {
+      return;
+    }
+
+    const double trace_m2 = translation_covariance.trace();
+    const double frobenius_m2 = translation_covariance.norm();
+    const Eigen::Matrix3d symmetric_covariance =
+        0.5 * (translation_covariance + translation_covariance.transpose());
+    const Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> eig(
+        symmetric_covariance);
+
+    const std::string base_path =
+        "metrics/posterior_covariance/" + source_name;
+    drawFiniteScalar(base_path + "/translation_trace_m2", trace_m2);
+    drawFiniteScalar(base_path + "/translation_trace_cm2", trace_m2 * 1.0e4);
+    drawFiniteScalar(base_path + "/translation_frobenius_m2", frobenius_m2);
+    drawFiniteScalar(base_path + "/translation_frobenius_cm2",
+                     frobenius_m2 * 1.0e4);
+    if (trace_m2 > 0.0) {
+      drawFiniteScalar(base_path + "/translation_trace_log10_m2",
+                       std::log10(trace_m2));
+    }
+
+    const double sigma_x_cm =
+        std::sqrt(std::max(0.0, translation_covariance(0, 0))) * 100.0;
+    const double sigma_y_cm =
+        std::sqrt(std::max(0.0, translation_covariance(1, 1))) * 100.0;
+    const double sigma_z_cm =
+        std::sqrt(std::max(0.0, translation_covariance(2, 2))) * 100.0;
+    double sigma_max_cm = std::numeric_limits<double>::quiet_NaN();
+    drawFiniteScalar(base_path + "/sigma_x_cm", sigma_x_cm);
+    drawFiniteScalar(base_path + "/sigma_y_cm", sigma_y_cm);
+    drawFiniteScalar(base_path + "/sigma_z_cm", sigma_z_cm);
+    drawFiniteScalar(base_path + "/sigma_mean_cm",
+                     (sigma_x_cm + sigma_y_cm + sigma_z_cm) / 3.0);
+
+    if (eig.info() == Eigen::Success) {
+      const auto eigenvalues = eig.eigenvalues();
+      drawFiniteScalar(base_path + "/sigma_min_cm",
+                       std::sqrt(std::max(0.0, eigenvalues.minCoeff())) *
+                           100.0);
+      sigma_max_cm =
+          std::sqrt(std::max(0.0, eigenvalues.maxCoeff())) * 100.0;
+      drawFiniteScalar(base_path + "/sigma_max_cm", sigma_max_cm);
+    }
+
+    if (trace_m2 > 1.0e-8 &&
+        covariance_trace_reference_m2_.find(source_name) ==
+            covariance_trace_reference_m2_.end()) {
+      covariance_trace_reference_m2_[source_name] = trace_m2;
+    }
+    const auto reference_iter =
+        covariance_trace_reference_m2_.find(source_name);
+    if (reference_iter != covariance_trace_reference_m2_.end() &&
+        reference_iter->second > 0.0) {
+      const double reference_m2 = reference_iter->second;
+      drawFiniteScalar(base_path + "/translation_trace_reference_m2",
+                       reference_m2);
+      drawFiniteScalar(base_path + "/translation_trace_delta_m2",
+                       trace_m2 - reference_m2);
+      drawFiniteScalar(base_path + "/translation_trace_delta_cm2",
+                       (trace_m2 - reference_m2) * 1.0e4);
+      drawFiniteScalar(base_path + "/translation_trace_delta_percent",
+                       100.0 * (trace_m2 / reference_m2 - 1.0));
+    }
+
+    if (std::isfinite(sigma_max_cm) && sigma_max_cm > 1.0e-5 &&
+        covariance_sigma_max_reference_cm_.find(source_name) ==
+            covariance_sigma_max_reference_cm_.end()) {
+      covariance_sigma_max_reference_cm_[source_name] = sigma_max_cm;
+    }
+    const auto sigma_reference_iter =
+        covariance_sigma_max_reference_cm_.find(source_name);
+    if (std::isfinite(sigma_max_cm) &&
+        sigma_reference_iter != covariance_sigma_max_reference_cm_.end()) {
+      const double reference_cm = sigma_reference_iter->second;
+      drawFiniteScalar(base_path + "/sigma_max_reference_cm", reference_cm);
+      drawFiniteScalar(base_path + "/sigma_max_delta_cm",
+                       sigma_max_cm - reference_cm);
+      drawFiniteScalar(base_path + "/sigma_max_delta_mm",
+                       (sigma_max_cm - reference_cm) * 10.0);
+    }
   }
 
   void publishLatest(const ros::WallTimerEvent&) {
@@ -499,7 +1508,7 @@ class RerunTopicVisualizer {
     const bool liorf_pose_valid =
         has_liorf && odometryToPose(liorf_msg, &liorf_pose);
 
-    if (kimera_pose_valid) {
+    if (kimera_pose_valid && publish_raw_kimera_enable_) {
       publishSource(kimera_msg,
                     kimera_pose,
                     "kimera",
@@ -508,7 +1517,7 @@ class RerunTopicVisualizer {
                     &kimera_,
                     kimera_uncertainty_scale_);
     }
-    if (liorf_pose_valid) {
+    if (liorf_pose_valid && publish_secondary_enable_) {
       publishSource(liorf_msg,
                     liorf_pose,
                     secondary_entity_prefix_,
@@ -518,8 +1527,18 @@ class RerunTopicVisualizer {
                     secondary_uncertainty_scale_);
     }
 
-    if (world_alignment_enable_ && kimera_pose_valid && liorf_pose_valid) {
+    if (publish_legacy_online_alignment_enable_ && liorf_pose_valid) {
+      publishGroundTruthAligned(liorf_msg, liorf_pose);
+    }
+
+    if (publish_legacy_online_alignment_enable_ && world_alignment_enable_ &&
+        publish_aligned_kimera_enable_ && kimera_pose_valid &&
+        liorf_pose_valid) {
       publishAlignedKimera(kimera_msg, kimera_pose, liorf_msg, liorf_pose);
+    }
+
+    if (kimera_pose_valid && liorf_pose_valid) {
+      publishCommonAlignedOverlay();
     }
 
     if (lag_scalars_enable_ && (has_kimera || has_liorf)) {
@@ -574,6 +1593,239 @@ class RerunTopicVisualizer {
     }
   }
 
+  bool estimateCommonFrameAlignment(
+      const std::vector<TimedPose>& source_history,
+      const double window_start_stamp_sec,
+      const double window_end_stamp_sec,
+      const gtsam::Point3& origin,
+      Se2AlignmentEstimate* alignment,
+      std::vector<gtsam::Pose3>* aligned_poses,
+      int* pair_count,
+      double* max_nearest_diff_sec) const {
+    CHECK_NOTNULL(alignment);
+    CHECK_NOTNULL(aligned_poses);
+    CHECK_NOTNULL(pair_count);
+    CHECK_NOTNULL(max_nearest_diff_sec);
+    *pair_count = 0;
+    *max_nearest_diff_sec = 0.0;
+    aligned_poses->clear();
+    if (source_history.size() < 2u) {
+      return false;
+    }
+
+    std::vector<gtsam::Point3> source_points;
+    std::vector<gtsam::Point3> target_points;
+    int last_gt_index = -1;
+    for (const TimedPose& sample : source_history) {
+      if (sample.stamp_sec < window_start_stamp_sec ||
+          sample.stamp_sec > window_end_stamp_sec) {
+        continue;
+      }
+      double nearest_diff_sec = std::numeric_limits<double>::infinity();
+      const int gt_index =
+          nearestGroundTruthIndex(sample.stamp_sec, &nearest_diff_sec);
+      if (gt_index < 0 || gt_index == last_gt_index ||
+          nearest_diff_sec > ground_truth_max_timestamp_diff_sec_) {
+        continue;
+      }
+      last_gt_index = gt_index;
+      *max_nearest_diff_sec =
+          std::max(*max_nearest_diff_sec, nearest_diff_sec);
+      source_points.push_back(sample.pose.translation());
+      target_points.push_back(ground_truth_[gt_index].pose.translation());
+    }
+
+    *pair_count = static_cast<int>(source_points.size());
+    if (*pair_count < ground_truth_alignment_min_pairs_ ||
+        pathLength2D(source_points) < ground_truth_alignment_min_path_length_m_) {
+      return false;
+    }
+    if (!estimateSe2Alignment(source_points, target_points, alignment)) {
+      return false;
+    }
+
+    aligned_poses->reserve(source_history.size());
+    for (const TimedPose& sample : source_history) {
+      if (sample.stamp_sec < window_start_stamp_sec ||
+          sample.stamp_sec > window_end_stamp_sec) {
+        continue;
+      }
+      aligned_poses->push_back(
+          transformPoseSe2(sample.pose, *alignment, origin));
+    }
+    return aligned_poses->size() > 1u;
+  }
+
+  void drawCommonFrameAlignmentScalars(
+      const std::string& entity_prefix,
+      const Se2AlignmentEstimate& alignment,
+      const int pair_count,
+      const double max_nearest_diff_sec) {
+    visualizer_->drawScalar(entity_prefix + "/alignment/pairs",
+                            static_cast<double>(pair_count));
+    visualizer_->drawScalar(entity_prefix +
+                                "/alignment/max_nearest_stamp_delta_sec",
+                            max_nearest_diff_sec);
+    visualizer_->drawScalar(entity_prefix + "/alignment/rmse_m",
+                            alignment.rmse_m);
+    visualizer_->drawScalar(entity_prefix + "/alignment/mean_m",
+                            alignment.mean_m);
+    visualizer_->drawScalar(entity_prefix + "/alignment/max_m",
+                            alignment.max_m);
+    visualizer_->drawScalar(entity_prefix + "/alignment/yaw_deg",
+                            alignment.yaw_rad * 180.0 / M_PI);
+  }
+
+  void publishCommonAlignedOverlay() {
+    if (!publish_common_aligned_overlay_enable_ || !world_alignment_enable_ ||
+        !ground_truth_enable_ || !ground_truth_loaded_) {
+      return;
+    }
+
+    std::vector<TimedPose> kimera_history;
+    std::vector<TimedPose> secondary_history;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      kimera_history = kimera_.timed_trajectory;
+      secondary_history = liorf_.timed_trajectory;
+    }
+    if (kimera_history.size() < 2u || secondary_history.size() < 2u) {
+      return;
+    }
+
+    const double first_common_stamp_sec =
+        std::max(kimera_history.front().stamp_sec,
+                 secondary_history.front().stamp_sec);
+    const double latest_common_stamp_sec =
+        std::min(kimera_history.back().stamp_sec,
+                 secondary_history.back().stamp_sec);
+    if (!std::isfinite(first_common_stamp_sec) ||
+        !std::isfinite(latest_common_stamp_sec) ||
+        latest_common_stamp_sec <= first_common_stamp_sec) {
+      return;
+    }
+
+    double window_end_stamp_sec = latest_common_stamp_sec;
+    if (ground_truth_window_duration_sec_ > 0.0) {
+      window_end_stamp_sec =
+          std::min(window_end_stamp_sec,
+                   first_common_stamp_sec + ground_truth_window_duration_sec_);
+    }
+    if (std::isfinite(last_common_aligned_published_until_stamp_sec_) &&
+        window_end_stamp_sec <=
+            last_common_aligned_published_until_stamp_sec_ + 1e-6) {
+      return;
+    }
+
+    double origin_diff_sec = std::numeric_limits<double>::infinity();
+    int origin_index =
+        nearestGroundTruthIndex(first_common_stamp_sec, &origin_diff_sec);
+    if (origin_index < 0) {
+      return;
+    }
+    const gtsam::Point3 origin = ground_truth_[origin_index].pose.translation();
+
+    std::vector<gtsam::Pose3> gt_local_poses;
+    std::vector<gtsam::Point3> gt_local_points;
+    gt_local_poses.reserve(ground_truth_.size());
+    gt_local_points.reserve(ground_truth_.size());
+    for (const GroundTruthPose& gt_pose : ground_truth_) {
+      if (gt_pose.stamp_sec + ground_truth_max_timestamp_diff_sec_ <
+              first_common_stamp_sec ||
+          gt_pose.stamp_sec - ground_truth_max_timestamp_diff_sec_ >
+              window_end_stamp_sec) {
+        continue;
+      }
+      const Eigen::Vector3d local =
+          gt_pose.pose.translation() - origin;
+      const gtsam::Pose3 local_pose(
+          gt_pose.pose.rotation(),
+          gtsam::Point3(local.x(), local.y(), local.z()));
+      gt_local_poses.push_back(local_pose);
+      gt_local_points.push_back(local_pose.translation());
+    }
+    if (gt_local_poses.size() < 2u) {
+      return;
+    }
+
+    Se2AlignmentEstimate secondary_alignment;
+    Se2AlignmentEstimate kimera_alignment;
+    std::vector<gtsam::Pose3> aligned_secondary_poses;
+    std::vector<gtsam::Pose3> aligned_kimera_poses;
+    int secondary_pairs = 0;
+    int kimera_pairs = 0;
+    double secondary_max_nearest_diff_sec = 0.0;
+    double kimera_max_nearest_diff_sec = 0.0;
+    const bool secondary_ok = estimateCommonFrameAlignment(
+        secondary_history,
+        first_common_stamp_sec,
+        window_end_stamp_sec,
+        origin,
+        &secondary_alignment,
+        &aligned_secondary_poses,
+        &secondary_pairs,
+        &secondary_max_nearest_diff_sec);
+    const bool kimera_ok = estimateCommonFrameAlignment(
+        kimera_history,
+        first_common_stamp_sec,
+        window_end_stamp_sec,
+        origin,
+        &kimera_alignment,
+        &aligned_kimera_poses,
+        &kimera_pairs,
+        &kimera_max_nearest_diff_sec);
+    if (!secondary_ok && !kimera_ok) {
+      return;
+    }
+
+    const uint64_t stamp_nsec = stampSecToNSec(window_end_stamp_sec);
+    visualizer_->setTimeNSec(stamp_nsec);
+    const Eigen::Vector4f gt_rgba(65.f, 140.f, 255.f, 220.f);
+    const Eigen::Vector4f secondary_rgba(245.f, 180.f, 20.f, 220.f);
+    const Eigen::Vector4f kimera_rgba(40.f, 220.f, 80.f, 220.f);
+    visualizer_->drawTrajectory(
+        "aligned/ground_truth/trajectory", gt_local_poses, gt_rgba, 2.0f);
+    visualizer_->drawPoints(
+        "aligned/ground_truth/samples", gt_local_points, gt_rgba, 0.12f);
+    if (secondary_ok) {
+      const std::string secondary_prefix = "aligned/" + secondary_entity_prefix_;
+      visualizer_->drawTf(secondary_prefix + "/" + secondary_frame_name_,
+                          aligned_secondary_poses.back(),
+                          0.5f);
+      visualizer_->drawTrajectory(secondary_prefix + "/trajectory",
+                                  aligned_secondary_poses,
+                                  secondary_rgba,
+                                  1.75f);
+      drawCommonFrameAlignmentScalars(secondary_prefix,
+                                      secondary_alignment,
+                                      secondary_pairs,
+                                      secondary_max_nearest_diff_sec);
+    }
+    if (kimera_ok) {
+      visualizer_->drawTf("aligned/kimera/base_link",
+                          aligned_kimera_poses.back(),
+                          0.5f);
+      visualizer_->drawTrajectory("aligned/kimera/trajectory",
+                                  aligned_kimera_poses,
+                                  kimera_rgba,
+                                  1.75f);
+      drawCommonFrameAlignmentScalars("aligned/kimera",
+                                      kimera_alignment,
+                                      kimera_pairs,
+                                      kimera_max_nearest_diff_sec);
+    }
+    visualizer_->drawScalar("aligned/metadata/common_frame_ready", 1.0);
+    visualizer_->drawScalar("aligned/metadata/window_start_stamp_sec",
+                            first_common_stamp_sec);
+    visualizer_->drawScalar("aligned/metadata/window_end_stamp_sec",
+                            window_end_stamp_sec);
+    visualizer_->drawScalar("aligned/metadata/origin_gt_stamp_sec",
+                            ground_truth_[origin_index].stamp_sec);
+    visualizer_->drawScalar("aligned/metadata/origin_gt_diff_sec",
+                            origin_diff_sec);
+    last_common_aligned_published_until_stamp_sec_ = window_end_stamp_sec;
+  }
+
   bool takeCloudForPublish(CloudState* cloud, sensor_msgs::PointCloud2* msg) {
     CHECK_NOTNULL(cloud);
     CHECK_NOTNULL(msg);
@@ -610,6 +1862,191 @@ class RerunTopicVisualizer {
     visualizer_->drawPoints(entity_path, points, rgba, radius);
   }
 
+  int nearestGroundTruthIndex(const double stamp_sec,
+                              double* nearest_diff_sec) const {
+    CHECK_NOTNULL(nearest_diff_sec);
+    *nearest_diff_sec = std::numeric_limits<double>::infinity();
+    if (!std::isfinite(stamp_sec) || ground_truth_.empty()) {
+      return -1;
+    }
+
+    const auto iter = std::lower_bound(
+        ground_truth_.begin(),
+        ground_truth_.end(),
+        stamp_sec,
+        [](const GroundTruthPose& pose, const double stamp) {
+          return pose.stamp_sec < stamp;
+        });
+
+    int best_index = -1;
+    auto consider = [&](std::vector<GroundTruthPose>::const_iterator candidate) {
+      if (candidate == ground_truth_.end()) {
+        return;
+      }
+      const double diff = std::abs(candidate->stamp_sec - stamp_sec);
+      if (diff < *nearest_diff_sec) {
+        *nearest_diff_sec = diff;
+        best_index = static_cast<int>(
+            std::distance(ground_truth_.begin(), candidate));
+      }
+    };
+
+    consider(iter);
+    if (iter != ground_truth_.begin()) {
+      consider(std::prev(iter));
+    }
+    return best_index;
+  }
+
+  void publishGroundTruthAligned(const nav_msgs::Odometry& secondary_msg,
+                                 const gtsam::Pose3& secondary_pose) {
+    if (!ground_truth_enable_ || !ground_truth_loaded_) {
+      return;
+    }
+
+    const double secondary_stamp_sec = secondary_msg.header.stamp.toSec();
+    if (!std::isfinite(secondary_stamp_sec)) {
+      return;
+    }
+    if (!std::isfinite(last_ground_truth_alignment_observation_stamp_sec_) ||
+        secondary_stamp_sec >
+            last_ground_truth_alignment_observation_stamp_sec_) {
+      ground_truth_alignment_observations_.push_back(
+          {secondary_stamp_sec, secondary_pose});
+      last_ground_truth_alignment_observation_stamp_sec_ = secondary_stamp_sec;
+    }
+
+    std::vector<gtsam::Point3> gt_alignment_points;
+    std::vector<gtsam::Point3> secondary_alignment_points;
+    gt_alignment_points.reserve(ground_truth_alignment_observations_.size());
+    secondary_alignment_points.reserve(
+        ground_truth_alignment_observations_.size());
+
+    int last_gt_index = -1;
+    double max_nearest_diff_sec = 0.0;
+    for (const TimedPose& observation : ground_truth_alignment_observations_) {
+      double nearest_diff_sec = std::numeric_limits<double>::infinity();
+      const int gt_index =
+          nearestGroundTruthIndex(observation.stamp_sec, &nearest_diff_sec);
+      if (gt_index < 0 || gt_index == last_gt_index ||
+          nearest_diff_sec > ground_truth_max_timestamp_diff_sec_) {
+        continue;
+      }
+      last_gt_index = gt_index;
+      max_nearest_diff_sec = std::max(max_nearest_diff_sec, nearest_diff_sec);
+      gt_alignment_points.push_back(ground_truth_[gt_index].pose.translation());
+      secondary_alignment_points.push_back(observation.pose.translation());
+    }
+
+    const double alignment_path_length_m =
+        pathLength2D(secondary_alignment_points);
+    if (static_cast<int>(gt_alignment_points.size()) <
+            ground_truth_alignment_min_pairs_ ||
+        alignment_path_length_m < ground_truth_alignment_min_path_length_m_) {
+      if (!ground_truth_wait_logged_) {
+        LOG(INFO) << "Waiting for Rerun ground-truth alignment; have "
+                  << gt_alignment_points.size() << " associated GT/"
+                  << secondary_entity_prefix_ << " pairs over "
+                  << alignment_path_length_m << " m.";
+        ground_truth_wait_logged_ = true;
+      }
+      return;
+    }
+
+    AlignmentEstimate alignment;
+    if (!estimateSe3Alignment(gt_alignment_points,
+                              secondary_alignment_points,
+                              &alignment)) {
+      if (!ground_truth_wait_logged_) {
+        LOG(WARNING) << "Could not estimate Rerun ground-truth SE(3) "
+                     << "alignment.";
+        ground_truth_wait_logged_ = true;
+      }
+      return;
+    }
+
+    std::vector<gtsam::Pose3> aligned_poses;
+    std::vector<gtsam::Point3> aligned_points;
+    aligned_poses.reserve(ground_truth_.size());
+    aligned_points.reserve(ground_truth_.size());
+    const double window_start_stamp_sec =
+        ground_truth_alignment_observations_.front().stamp_sec;
+    double window_end_stamp_sec = secondary_stamp_sec;
+    if (ground_truth_window_duration_sec_ > 0.0) {
+      window_end_stamp_sec =
+          std::min(window_end_stamp_sec,
+                   window_start_stamp_sec + ground_truth_window_duration_sec_);
+    }
+    if (!std::isfinite(window_end_stamp_sec) ||
+        window_end_stamp_sec <= window_start_stamp_sec) {
+      return;
+    }
+    if (std::isfinite(last_ground_truth_published_until_stamp_sec_) &&
+        window_end_stamp_sec <=
+            last_ground_truth_published_until_stamp_sec_ + 1e-6) {
+      return;
+    }
+    for (const GroundTruthPose& gt_pose : ground_truth_) {
+      if (gt_pose.stamp_sec + ground_truth_max_timestamp_diff_sec_ <
+              window_start_stamp_sec ||
+          gt_pose.stamp_sec - ground_truth_max_timestamp_diff_sec_ >
+              window_end_stamp_sec) {
+        continue;
+      }
+      const gtsam::Pose3 aligned_pose =
+          alignment.target_T_source * gt_pose.pose;
+      aligned_poses.push_back(aligned_pose);
+      aligned_points.push_back(aligned_pose.translation());
+    }
+    if (aligned_poses.size() < 2u) {
+      return;
+    }
+
+    const Eigen::Vector4f gt_rgba(65.f, 140.f, 255.f, 220.f);
+    const uint64_t ground_truth_stamp_nsec =
+        stampSecToNSec(window_end_stamp_sec);
+    visualizer_->setTimeNSec(ground_truth_stamp_nsec > 0ull
+                                 ? ground_truth_stamp_nsec
+                                 : stampToNSec(secondary_msg.header.stamp));
+    visualizer_->drawTrajectory(
+        "ground_truth/trajectory", aligned_poses, gt_rgba, 2.0f);
+    visualizer_->drawPoints(
+        "ground_truth/samples", aligned_points, gt_rgba, 0.12f);
+    visualizer_->drawScalar("ground_truth/alignment/initialized", 1.0);
+    visualizer_->drawScalar("ground_truth/alignment/pairs",
+                            static_cast<double>(gt_alignment_points.size()));
+    visualizer_->drawScalar("ground_truth/alignment/max_nearest_stamp_delta_sec",
+                            max_nearest_diff_sec);
+    visualizer_->drawScalar("ground_truth/alignment/path_length_m",
+                            alignment_path_length_m);
+    visualizer_->drawScalar("ground_truth/alignment/rmse_m",
+                            alignment.rmse_m);
+    visualizer_->drawScalar("ground_truth/alignment/mean_m",
+                            alignment.mean_m);
+    visualizer_->drawScalar("ground_truth/alignment/max_m", alignment.max_m);
+    visualizer_->drawScalar("ground_truth/alignment/rotation_determinant",
+                            alignment.determinant);
+    visualizer_->drawScalar("ground_truth/alignment/source_stamp_sec",
+                            secondary_msg.header.stamp.toSec());
+    visualizer_->drawScalar("ground_truth/alignment/window_duration_sec",
+                            window_end_stamp_sec - window_start_stamp_sec);
+    visualizer_->drawScalar("ground_truth/alignment/published_until_stamp_sec",
+                            window_end_stamp_sec);
+    last_ground_truth_published_until_stamp_sec_ = window_end_stamp_sec;
+
+    if (!ground_truth_published_) {
+      LOG(INFO) << "Published Rerun ground truth aligned to "
+                << secondary_entity_prefix_ << " using online SE(3) "
+                << "alignment. pairs=" << gt_alignment_points.size()
+                << ", window_sec="
+                << (window_end_stamp_sec - window_start_stamp_sec)
+                << ", rmse_m=" << alignment.rmse_m
+                << ", max_timestamp_delta_sec=" << max_nearest_diff_sec
+                << ".";
+      ground_truth_published_ = true;
+    }
+  }
+
   void publishKimeraLandmarksLatest() {
     sensor_msgs::PointCloud2 msg;
     if (!takeCloudForPublish(&kimera_landmarks_, &msg)) {
@@ -624,9 +2061,11 @@ class RerunTopicVisualizer {
 
     const Eigen::Vector4f rgba(40.f, 220.f, 80.f, 180.f);
     visualizer_->setTimeNSec(stampToNSec(msg.header.stamp));
-    visualizer_->drawPoints("kimera/landmarks", landmarks, rgba, 2.f);
+    if (publish_raw_kimera_enable_) {
+      visualizer_->drawPoints("kimera/landmarks", landmarks, rgba, 2.f);
+    }
 
-    if (!alignment_initialized_) {
+    if (!alignment_initialized_ || !publish_aligned_kimera_enable_) {
       return;
     }
     std::vector<gtsam::Point3> aligned_landmarks;
@@ -689,6 +2128,7 @@ class RerunTopicVisualizer {
       const Eigen::Matrix3d covariance =
           translationCovarianceFromPoseCovariance(pose_covariance);
       if (isUsableCovariance(covariance)) {
+        publishPosteriorCovarianceMetrics(entity_prefix, covariance);
         visualizer_->drawUncertainty(
             entity_prefix + "/current_pose/uncertainty",
             pose,
@@ -749,18 +2189,30 @@ class RerunTopicVisualizer {
                             alignment_timestamp_delta_sec_);
 
     if (uncertainty_enable_) {
+      const gtsam::Matrix6 pose_covariance =
+          poseCovarianceFromOdometry(kimera_msg);
+      const Eigen::Matrix3d rotation = liorf_T_kimera_world_.rotation().matrix();
+      const gtsam::Matrix6 aligned_pose_covariance =
+          rotatePoseCovariance6x6(pose_covariance, rotation);
+      if (raw_covariance_enable_) {
+        drawRawPoseCovariance6x6(
+            visualizer_.get(),
+            "kimera_aligned/current_pose/raw_pose_covariance_6x6",
+            aligned_pose_covariance);
+      }
       const Eigen::Matrix3d covariance =
-          translationCovarianceFromPoseCovariance(
-              poseCovarianceFromOdometry(kimera_msg));
+          translationCovarianceFromPoseCovariance(aligned_pose_covariance);
       if (isUsableCovariance(covariance)) {
-        const Eigen::Matrix3d rotation =
-            liorf_T_kimera_world_.rotation().matrix();
+        publishPosteriorCovarianceMetrics("kimera_aligned", covariance);
         visualizer_->drawUncertainty(
             "kimera_aligned/current_pose/uncertainty",
             aligned_pose,
-            rotation * covariance * rotation.transpose(),
+            covariance,
             rgba,
             static_cast<float>(aligned_kimera_uncertainty_scale_));
+        visualizer_->drawScalar(
+            "kimera_aligned/current_pose/uncertainty_frobenius_norm",
+            covariance.norm());
       }
     }
   }
@@ -772,6 +2224,8 @@ class RerunTopicVisualizer {
   ros::Subscriber liorf_local_map_sub_;
   ros::Subscriber liorf_current_scan_sub_;
   ros::Subscriber kimera_landmarks_sub_;
+  ros::Subscriber cbs_g2k_sub_;
+  ros::Subscriber cbs_k2g_sub_;
   ros::WallTimer timer_;
   std::mutex mutex_;
   SourceState kimera_;
@@ -779,6 +2233,8 @@ class RerunTopicVisualizer {
   CloudState liorf_local_map_;
   CloudState liorf_current_scan_;
   CloudState kimera_landmarks_;
+  BeliefTrafficState cbs_g2k_;
+  BeliefTrafficState cbs_k2g_;
   std::unique_ptr<RosRerunVisualizer> visualizer_;
 
   std::string kimera_odom_topic_;
@@ -788,19 +2244,37 @@ class RerunTopicVisualizer {
   std::string liorf_local_map_topic_;
   std::string liorf_current_scan_topic_;
   std::string kimera_landmarks_topic_;
+  std::string cbs_g2k_odom_belief_topic_;
+  std::string cbs_k2g_odom_belief_topic_;
+  std::string ground_truth_path_;
   std::string recording_id_;
   std::string rerun_host_;
   double publish_rate_hz_ = 5.0;
   double kimera_uncertainty_scale_ = 1.25;
   double secondary_uncertainty_scale_ = 1.25;
   double aligned_kimera_uncertainty_scale_ = 1.25;
+  double ground_truth_max_timestamp_diff_sec_ = 0.75;
+  double ground_truth_alignment_min_path_length_m_ = 3.0;
+  double ground_truth_window_duration_sec_ = 60.0;
   bool uncertainty_enable_ = true;
   bool raw_covariance_enable_ = true;
   bool lag_scalars_enable_ = true;
   bool world_alignment_enable_ = true;
   bool liorf_point_clouds_enable_ = true;
   bool kimera_landmarks_enable_ = true;
+  bool cbs_metrics_enable_ = false;
+  bool accumulated_covariance_enable_ = true;
+  bool publish_raw_kimera_enable_ = true;
+  bool publish_secondary_enable_ = true;
+  bool publish_aligned_kimera_enable_ = true;
+  bool publish_legacy_online_alignment_enable_ = false;
+  bool publish_common_aligned_overlay_enable_ = true;
+  bool ground_truth_enable_ = false;
+  bool ground_truth_loaded_ = false;
+  bool ground_truth_published_ = false;
+  bool ground_truth_wait_logged_ = false;
   int max_trajectory_len_ = 2000;
+  int ground_truth_alignment_min_pairs_ = 8;
   int liorf_local_map_max_points_ = 10000;
   int liorf_current_scan_max_points_ = 20000;
   int kimera_landmarks_max_points_ = 3000;
@@ -811,6 +2285,16 @@ class RerunTopicVisualizer {
       std::numeric_limits<double>::quiet_NaN();
   gtsam::Pose3 liorf_T_kimera_world_;
   std::vector<gtsam::Pose3> aligned_kimera_trajectory_;
+  std::map<std::string, double> covariance_trace_reference_m2_;
+  std::map<std::string, double> covariance_sigma_max_reference_cm_;
+  std::vector<GroundTruthPose> ground_truth_;
+  std::vector<TimedPose> ground_truth_alignment_observations_;
+  double last_ground_truth_alignment_observation_stamp_sec_ =
+      std::numeric_limits<double>::quiet_NaN();
+  double last_ground_truth_published_until_stamp_sec_ =
+      std::numeric_limits<double>::quiet_NaN();
+  double last_common_aligned_published_until_stamp_sec_ =
+      std::numeric_limits<double>::quiet_NaN();
 };
 
 }  // namespace

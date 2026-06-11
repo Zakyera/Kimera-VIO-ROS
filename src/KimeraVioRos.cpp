@@ -361,6 +361,12 @@ KimeraVioRos::KimeraVioRos()
       std::max(0, headless_landmarks_max_points_);
   nh_private_.param(
       "rerun_visualizer_enable", headless_rerun_visualizer_enable_, false);
+  nh_private_.param("rerun_scalar_metrics_enable",
+                    headless_rerun_scalar_metrics_enable_,
+                    false);
+  nh_private_.param("rerun_geometry_enable",
+                    headless_rerun_geometry_enable_,
+                    true);
   nh_private_.param("rerun_factor_graph_enable",
                     headless_rerun_factor_graph_enable_,
                     true);
@@ -793,7 +799,8 @@ void KimeraVioRos::initializeHeadlessLandmarksPublisher() {
 }
 
 void KimeraVioRos::initializeHeadlessRerunVisualizer() {
-  if (!headless_rerun_visualizer_enable_) {
+  if (!headless_rerun_visualizer_enable_ &&
+      !headless_rerun_scalar_metrics_enable_) {
     LOG(INFO) << "Kimera headless Rerun visualizer disabled.";
     return;
   }
@@ -802,7 +809,10 @@ void KimeraVioRos::initializeHeadlessRerunVisualizer() {
       "cbsms", headless_rerun_recording_id_, headless_rerun_host_);
   LOG(INFO) << "Kimera headless Rerun visualizer enabled. recording_id='"
             << headless_rerun_recording_id_ << "', host='"
-            << headless_rerun_host_ << "'.";
+            << headless_rerun_host_ << "', scalar_metrics="
+            << (headless_rerun_scalar_metrics_enable_ ? "true" : "false")
+            << ", geometry="
+            << (headless_rerun_geometry_enable_ ? "true" : "false") << ".";
 }
 
 void KimeraVioRos::publishHeadlessBackendOutput(
@@ -980,102 +990,117 @@ void KimeraVioRos::publishHeadlessRerunBackendOutput(
       return;
     }
 
+    const bool draw_scalars = headless_rerun_visualizer_enable_ ||
+                              headless_rerun_scalar_metrics_enable_;
+    const bool draw_geometry = headless_rerun_visualizer_enable_ &&
+                               headless_rerun_geometry_enable_;
+
     const auto current_pose_start_time = VIO::utils::Timer::tic();
     const gtsam::Pose3& pose = output->W_State_Blkf_.pose_;
     headless_rerun_visualizer_->setTimeNSec(output->timestamp_);
-    headless_rerun_visualizer_->drawTf("kimera/base_link", pose, 0.5f);
+    if (draw_geometry) {
+      headless_rerun_visualizer_->drawTf("kimera/base_link", pose, 0.5f);
 
-    const Eigen::Matrix3d current_pose_covariance =
-        translationCovarianceFromPoseCovariance(output->state_covariance_lkf_);
-    drawRawPoseCovariance6x6(
-        headless_rerun_visualizer_.get(),
-        "kimera/current_pose/raw_pose_covariance_6x6",
-        poseCovarianceFromMatrix(output->state_covariance_lkf_));
-    headless_rerun_visualizer_->drawUncertainty(
-        "kimera/current_pose/uncertainty",
-        pose,
-        current_pose_covariance,
-        Eigen::Vector4f(40.f, 220.f, 80.f, 160.f),
-        1.25f);
-    headless_rerun_visualizer_->drawScalar(
-        "kimera/current_pose/kimera_uncertainty_frobenius_norm",
-        current_pose_covariance.norm());
-    headless_rerun_visualizer_->drawScalar("kimera/keyframe_id",
-                                           output->cur_kf_id_);
-    headless_rerun_visualizer_->drawScalar(
-        "kimera/timing/optimization_ms",
-        output->optimization_time_sec_ * 1000.0);
+      const Eigen::Matrix3d current_pose_covariance =
+          translationCovarianceFromPoseCovariance(
+              output->state_covariance_lkf_);
+      drawRawPoseCovariance6x6(
+          headless_rerun_visualizer_.get(),
+          "kimera/current_pose/raw_pose_covariance_6x6",
+          poseCovarianceFromMatrix(output->state_covariance_lkf_));
+      headless_rerun_visualizer_->drawUncertainty(
+          "kimera/current_pose/uncertainty",
+          pose,
+          current_pose_covariance,
+          Eigen::Vector4f(40.f, 220.f, 80.f, 160.f),
+          1.25f);
+      headless_rerun_visualizer_->drawScalar(
+          "kimera/current_pose/kimera_uncertainty_frobenius_norm",
+          current_pose_covariance.norm());
+    }
 
-    if (headless_cbs_belief_bridge_enable_) {
+    if (draw_scalars) {
+      headless_rerun_visualizer_->drawScalar("kimera/keyframe_id",
+                                             output->cur_kf_id_);
       headless_rerun_visualizer_->drawScalar(
-          "kimera/cbs/beliefs/published_per_update",
-          output->cbs_outgoing_odom_beliefs_.size());
-      headless_rerun_visualizer_->drawScalar(
-          "kimera/cbs/beliefs/received_per_update",
-          output->external_beliefs_received_per_update_);
-      headless_rerun_visualizer_->drawScalar(
-          "kimera/cbs/beliefs/dropped_by_receive_gate_per_update",
-          cbs_beliefs_receive_gate_dropped_per_rerun_frame_.exchange(
-              0u, std::memory_order_relaxed));
-      headless_rerun_visualizer_->drawScalar(
-          "kimera/cbs/beliefs/added_to_factor_graph_per_update",
-          output->external_beliefs_added_per_update_);
-      headless_rerun_visualizer_->drawScalar(
-          "kimera/cbs/beliefs/rejected_first_message_per_update",
-          output->external_beliefs_rejected_first_message_per_update_);
-      headless_rerun_visualizer_->drawScalar(
-          "kimera/cbs/beliefs/rejected_update_status_per_update",
-          output->external_beliefs_rejected_update_status_per_update_);
-      headless_rerun_visualizer_->drawScalar(
-          "kimera/cbs/beliefs/rejected_inactive_window_per_update",
-          output->external_beliefs_rejected_inactive_window_per_update_);
-      headless_rerun_visualizer_->drawScalar(
-          "kimera/cbs/beliefs/rejected_shape_per_update",
-          output->external_beliefs_rejected_shape_per_update_);
-      headless_rerun_visualizer_->drawScalar(
-          "kimera/cbs/beliefs/rejected_exception_per_update",
-          output->external_beliefs_rejected_exception_per_update_);
-      headless_rerun_visualizer_->drawScalar(
-          "kimera/cbs/timing/belief_generation_ms",
-          output->cbs_belief_generation_time_sec_ * 1000.0);
-      headless_rerun_visualizer_->drawScalar(
-          "kimera/cbs/marginalization_graph/factor_count",
-          output->cbs_marginalization_graph_factor_count_);
+          "kimera/timing/optimization_ms",
+          output->optimization_time_sec_ * 1000.0);
+
+      if (headless_cbs_belief_bridge_enable_) {
+        headless_rerun_visualizer_->drawScalar(
+            "kimera/cbs/beliefs/published_per_update",
+            output->cbs_outgoing_odom_beliefs_.size());
+        headless_rerun_visualizer_->drawScalar(
+            "kimera/cbs/beliefs/received_per_update",
+            output->external_beliefs_received_per_update_);
+        headless_rerun_visualizer_->drawScalar(
+            "kimera/cbs/beliefs/dropped_by_receive_gate_per_update",
+            cbs_beliefs_receive_gate_dropped_per_rerun_frame_.exchange(
+                0u, std::memory_order_relaxed));
+        headless_rerun_visualizer_->drawScalar(
+            "kimera/cbs/beliefs/added_to_factor_graph_per_update",
+            output->external_beliefs_added_per_update_);
+        headless_rerun_visualizer_->drawScalar(
+            "kimera/cbs/beliefs/rejected_first_message_per_update",
+            output->external_beliefs_rejected_first_message_per_update_);
+        headless_rerun_visualizer_->drawScalar(
+            "kimera/cbs/beliefs/rejected_update_status_per_update",
+            output->external_beliefs_rejected_update_status_per_update_);
+        headless_rerun_visualizer_->drawScalar(
+            "kimera/cbs/beliefs/rejected_inactive_window_per_update",
+            output->external_beliefs_rejected_inactive_window_per_update_);
+        headless_rerun_visualizer_->drawScalar(
+            "kimera/cbs/beliefs/rejected_shape_per_update",
+            output->external_beliefs_rejected_shape_per_update_);
+        headless_rerun_visualizer_->drawScalar(
+            "kimera/cbs/beliefs/rejected_exception_per_update",
+            output->external_beliefs_rejected_exception_per_update_);
+        headless_rerun_visualizer_->drawScalar(
+            "kimera/cbs/timing/belief_generation_ms",
+            output->cbs_belief_generation_time_sec_ * 1000.0);
+        headless_rerun_visualizer_->drawScalar(
+            "kimera/cbs/marginalization_graph/factor_count",
+            output->cbs_marginalization_graph_factor_count_);
+      }
     }
     current_pose_time_sec = elapsedSec(current_pose_start_time);
 
     const auto trajectory_start_time = VIO::utils::Timer::tic();
-    const int64_t current_kf_id = static_cast<int64_t>(output->cur_kf_id_);
-    if (current_kf_id != headless_rerun_last_kf_id_) {
-      headless_rerun_trajectory_.push_back(pose);
-      headless_rerun_last_kf_id_ = current_kf_id;
-    }
-    if (headless_rerun_trajectory_.size() > 1u) {
-      headless_rerun_visualizer_->drawTrajectory(
-          "kimera/trajectory",
-          headless_rerun_trajectory_,
-          Eigen::Vector4f(40.f, 220.f, 80.f, 255.f),
-          1.5f);
+    if (draw_geometry) {
+      const int64_t current_kf_id = static_cast<int64_t>(output->cur_kf_id_);
+      if (current_kf_id != headless_rerun_last_kf_id_) {
+        headless_rerun_trajectory_.push_back(pose);
+        headless_rerun_last_kf_id_ = current_kf_id;
+      }
+      if (headless_rerun_trajectory_.size() > 1u) {
+        headless_rerun_visualizer_->drawTrajectory(
+            "kimera/trajectory",
+            headless_rerun_trajectory_,
+            Eigen::Vector4f(40.f, 220.f, 80.f, 255.f),
+            1.5f);
+      }
     }
     trajectory_time_sec = elapsedSec(trajectory_start_time);
 
     const auto landmarks_start_time = VIO::utils::Timer::tic();
-    std::vector<gtsam::Point3> landmarks;
-    landmarks.reserve(output->landmarks_with_id_map_.size());
-    for (const auto& id_landmark : output->landmarks_with_id_map_) {
-      landmarks.emplace_back(id_landmark.second);
-    }
-    if (!landmarks.empty()) {
-      headless_rerun_visualizer_->drawPoints(
-          "kimera/landmarks",
-          landmarks,
-          Eigen::Vector4f(40.f, 220.f, 80.f, 180.f),
-          2.f);
+    if (draw_geometry) {
+      std::vector<gtsam::Point3> landmarks;
+      landmarks.reserve(output->landmarks_with_id_map_.size());
+      for (const auto& id_landmark : output->landmarks_with_id_map_) {
+        landmarks.emplace_back(id_landmark.second);
+      }
+      if (!landmarks.empty()) {
+        headless_rerun_visualizer_->drawPoints(
+            "kimera/landmarks",
+            landmarks,
+            Eigen::Vector4f(40.f, 220.f, 80.f, 180.f),
+            2.f);
+      }
     }
     landmarks_time_sec = elapsedSec(landmarks_start_time);
 
     const auto factor_graph_start_time = VIO::utils::Timer::tic();
-    if (headless_rerun_factor_graph_enable_ &&
+    if (draw_geometry && headless_rerun_factor_graph_enable_ &&
         output->factor_graph_.size() > 0u && output->state_.size() > 0u) {
       headless_rerun_visualizer_->drawFactors(
           "kimera/factor_graph",

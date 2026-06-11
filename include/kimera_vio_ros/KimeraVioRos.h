@@ -130,6 +130,8 @@ class KimeraVioRos {
   bool headless_landmarks_publish_enable_ = false;
   int headless_landmarks_max_points_ = 3000;
   bool headless_rerun_visualizer_enable_ = false;
+  bool headless_rerun_scalar_metrics_enable_ = false;
+  bool headless_rerun_geometry_enable_ = true;
   bool headless_rerun_factor_graph_enable_ = true;
   std::string odom_frame_id_;
   std::string base_link_frame_id_;

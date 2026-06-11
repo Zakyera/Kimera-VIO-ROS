@@ -59,6 +59,7 @@ file and include this one to launch KimeraVIO on the dataset of your choice -->
   <arg name="cbs_odom_horizon_tolerance_sec" default="0.06"/>
   <arg name="cbs_odom_max_horizon_pairs_per_update" default="25"/>
   <arg name="cbs_use_bpsam_for_local_belief_covariance" default="false"/>
+  <arg name="cbs_use_local_smoother_for_belief_covariance" default="true"/>
   <arg name="cbs_use_persistent_bpsam_sidecar_for_belief_covariance"
        default="false"/>
   <arg name="cbs_use_persistent_bpsam_for_main_backend" default="false"/>
@@ -134,6 +135,8 @@ file and include this one to launch KimeraVIO on the dataset of your choice -->
   <arg name="rerun_visualizer_enable" default="false"/>
   <arg name="rerun_recording_id" default=""/>
   <arg name="rerun_host" default="rerun+http://172.18.0.1:9876/proxy"/>
+  <arg name="rerun_scalar_metrics_enable" default="false"/>
+  <arg name="rerun_geometry_enable" default="true"/>
   <arg name="rerun_factor_graph_enable" default="true"/>
   <arg name="rerun_world_alignment_enable" default="true"/>
   <arg name="headless_landmarks_publish_enable" default="false"/>
@@ -192,6 +195,7 @@ file and include this one to launch KimeraVIO on the dataset of your choice -->
               --viz_type=$(arg viz_type)
               --visualize=$(arg visualize)
               --cbs_use_bpsam_for_local_belief_covariance=$(arg cbs_use_bpsam_for_local_belief_covariance)
+              --cbs_use_local_smoother_for_belief_covariance=$(arg cbs_use_local_smoother_for_belief_covariance)
               --cbs_use_persistent_bpsam_sidecar_for_belief_covariance=$(arg cbs_use_persistent_bpsam_sidecar_for_belief_covariance)
               --cbs_use_persistent_bpsam_for_main_backend=$(arg cbs_use_persistent_bpsam_for_main_backend)
               --cbs_log_covariance_sanity_diff=$(arg cbs_log_covariance_sanity_diff)
@@ -240,6 +244,10 @@ file and include this one to launch KimeraVIO on the dataset of your choice -->
     <param name="rerun_visualizer_enable" value="$(arg rerun_visualizer_enable)"/>
     <param name="rerun_recording_id" value="$(arg rerun_recording_id)"/>
     <param name="rerun_host" value="$(arg rerun_host)"/>
+    <param name="rerun_scalar_metrics_enable"
+           value="$(arg rerun_scalar_metrics_enable)"/>
+    <param name="rerun_geometry_enable"
+           value="$(arg rerun_geometry_enable)"/>
     <param name="rerun_factor_graph_enable"
            value="$(arg rerun_factor_graph_enable)"/>
     <param name="rerun_world_alignment_enable"

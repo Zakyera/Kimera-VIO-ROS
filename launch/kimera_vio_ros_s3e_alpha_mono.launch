@@ -37,6 +37,8 @@
   <arg name="rerun_visualizer_enable" default="true"/>
   <arg name="rerun_recording_id" default=""/>
   <arg name="rerun_host" default="rerun+http://172.18.0.1:9876/proxy"/>
+  <arg name="rerun_scalar_metrics_enable" default="false"/>
+  <arg name="rerun_geometry_enable" default="true"/>
   <arg name="rerun_factor_graph_enable" default="true"/>
   <arg name="rerun_world_alignment_enable" default="true"/>
   <arg name="headless_landmarks_publish_enable" default="false"/>

@@ -15,6 +15,7 @@
 #include <gtsam/geometry/Pose3.h>
 #include <gtsam/nonlinear/NonlinearFactorGraph.h>
 #include <gtsam/nonlinear/Values.h>
+#include <opencv2/core/mat.hpp>
 
 namespace VIO {
 
@@ -48,6 +49,9 @@ class RosRerunVisualizer {
                        const Eigen::Matrix3d& covariance,
                        const Eigen::Vector4f& rgba,
                        float line_width);
+  void drawImage(const std::string& entity_path,
+                 const cv::Mat& image,
+                 bool is_static = false);
 
  private:
   class Impl;

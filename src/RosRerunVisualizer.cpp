@@ -73,4 +73,10 @@ void RosRerunVisualizer::drawUncertainty(
       entity_path, pose, covariance, rgba, line_width);
 }
 
+void RosRerunVisualizer::drawImage(const std::string& entity_path,
+                                   const cv::Mat& image,
+                                   const bool is_static) {
+  impl_->visualizer_.drawImage(entity_path, image, is_static);
+}
+
 }  // namespace VIO

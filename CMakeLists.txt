@@ -10,6 +10,7 @@ find_package(Eigen3 REQUIRED)
 find_package(GTSAM REQUIRED)
 find_package(cbs REQUIRED)
 find_package(aria_viz REQUIRED)
+find_package(OpenCV REQUIRED)
 
 ### System Dependencies
 find_package(Boost REQUIRED COMPONENTS
@@ -47,6 +48,10 @@ cs_add_library(${PROJECT_NAME}
   src/utils/UtilsRos.cpp
   src/utils/CsvPublisher.cpp
 )
+target_include_directories(${PROJECT_NAME}
+  SYSTEM BEFORE PUBLIC
+    ${OpenCV_INCLUDE_DIRS}
+)
 set(GTSAM_VENDORED_EIGEN_INCLUDE "${GTSAM_INCLUDE_DIR}/gtsam/3rdparty/Eigen")
 if(EXISTS "${GTSAM_VENDORED_EIGEN_INCLUDE}/Eigen/Dense")
   target_include_directories(${PROJECT_NAME}
@@ -54,10 +59,14 @@ if(EXISTS "${GTSAM_VENDORED_EIGEN_INCLUDE}/Eigen/Dense")
       ${GTSAM_VENDORED_EIGEN_INCLUDE}
   )
 endif()
-target_link_libraries(${PROJECT_NAME} kimera_vio cbs aria_viz)
+target_link_libraries(${PROJECT_NAME} kimera_vio cbs aria_viz ${OpenCV_LIBRARIES})
 
 cs_add_executable(${PROJECT_NAME}_node
   src/KimeraVioRosNode.cpp
+)
+target_include_directories(${PROJECT_NAME}_node
+  SYSTEM BEFORE PRIVATE
+    ${OpenCV_INCLUDE_DIRS}
 )
 if(EXISTS "${GTSAM_VENDORED_EIGEN_INCLUDE}/Eigen/Dense")
   target_include_directories(${PROJECT_NAME}_node
@@ -70,6 +79,10 @@ target_link_libraries(${PROJECT_NAME}_node ${PROJECT_NAME})
 cs_add_executable(csv_publisher_node
   src/utils/CsvPublisherNode.cpp
 )
+target_include_directories(csv_publisher_node
+  SYSTEM BEFORE PRIVATE
+    ${OpenCV_INCLUDE_DIRS}
+)
 if(EXISTS "${GTSAM_VENDORED_EIGEN_INCLUDE}/Eigen/Dense")
   target_include_directories(csv_publisher_node
     SYSTEM BEFORE PRIVATE
@@ -81,6 +94,10 @@ target_link_libraries(csv_publisher_node ${PROJECT_NAME})
 cs_add_executable(rerun_topic_visualizer_node
   src/RerunTopicVisualizerNode.cpp
 )
+target_include_directories(rerun_topic_visualizer_node
+  SYSTEM BEFORE PRIVATE
+    ${OpenCV_INCLUDE_DIRS}
+)
 if(EXISTS "${GTSAM_VENDORED_EIGEN_INCLUDE}/Eigen/Dense")
   target_include_directories(rerun_topic_visualizer_node
     SYSTEM BEFORE PRIVATE
@@ -89,8 +106,27 @@ if(EXISTS "${GTSAM_VENDORED_EIGEN_INCLUDE}/Eigen/Dense")
 endif()
 target_link_libraries(rerun_topic_visualizer_node ${PROJECT_NAME})
 
+cs_add_executable(artifact_rerun_visualizer_node
+  src/ArtifactRerunVisualizerNode.cpp
+)
+target_include_directories(artifact_rerun_visualizer_node
+  SYSTEM BEFORE PRIVATE
+    ${OpenCV_INCLUDE_DIRS}
+)
+if(EXISTS "${GTSAM_VENDORED_EIGEN_INCLUDE}/Eigen/Dense")
+  target_include_directories(artifact_rerun_visualizer_node
+    SYSTEM BEFORE PRIVATE
+      ${GTSAM_VENDORED_EIGEN_INCLUDE}
+  )
+endif()
+target_link_libraries(artifact_rerun_visualizer_node ${PROJECT_NAME})
+
 catkin_add_gtest(testKimeraVioRos
   test/testKimeraVioRos.cpp
+)
+target_include_directories(testKimeraVioRos
+  SYSTEM BEFORE PRIVATE
+    ${OpenCV_INCLUDE_DIRS}
 )
 target_link_libraries(testKimeraVioRos ${PROJECT_NAME})
 
