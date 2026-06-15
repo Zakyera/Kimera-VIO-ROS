@@ -918,6 +918,16 @@ gtsam::Pose3 transformPoseSe2(const gtsam::Pose3& pose,
                       gtsam::Point3(p.x(), p.y(), p.z()));
 }
 
+gtsam::Pose3 transformPoseSe3ToLocal(const gtsam::Pose3& pose,
+                                     const AlignmentEstimate& alignment,
+                                     const gtsam::Point3& origin) {
+  const gtsam::Pose3 aligned_pose = alignment.target_T_source * pose;
+  const Eigen::Vector3d origin_v(origin.x(), origin.y(), origin.z());
+  const Eigen::Vector3d p = aligned_pose.translation() - origin_v;
+  return gtsam::Pose3(aligned_pose.rotation(),
+                      gtsam::Point3(p.x(), p.y(), p.z()));
+}
+
 class RerunTopicVisualizer {
  public:
   RerunTopicVisualizer()
@@ -1598,7 +1608,7 @@ class RerunTopicVisualizer {
       const double window_start_stamp_sec,
       const double window_end_stamp_sec,
       const gtsam::Point3& origin,
-      Se2AlignmentEstimate* alignment,
+      AlignmentEstimate* alignment,
       std::vector<gtsam::Pose3>* aligned_poses,
       int* pair_count,
       double* max_nearest_diff_sec) const {
@@ -1640,7 +1650,7 @@ class RerunTopicVisualizer {
         pathLength2D(source_points) < ground_truth_alignment_min_path_length_m_) {
       return false;
     }
-    if (!estimateSe2Alignment(source_points, target_points, alignment)) {
+    if (!estimateSe3Alignment(source_points, target_points, alignment)) {
       return false;
     }
 
@@ -1651,16 +1661,17 @@ class RerunTopicVisualizer {
         continue;
       }
       aligned_poses->push_back(
-          transformPoseSe2(sample.pose, *alignment, origin));
+          transformPoseSe3ToLocal(sample.pose, *alignment, origin));
     }
     return aligned_poses->size() > 1u;
   }
 
   void drawCommonFrameAlignmentScalars(
       const std::string& entity_prefix,
-      const Se2AlignmentEstimate& alignment,
+      const AlignmentEstimate& alignment,
       const int pair_count,
       const double max_nearest_diff_sec) {
+    visualizer_->drawScalar(entity_prefix + "/alignment/mode_se3", 1.0);
     visualizer_->drawScalar(entity_prefix + "/alignment/pairs",
                             static_cast<double>(pair_count));
     visualizer_->drawScalar(entity_prefix +
@@ -1672,8 +1683,8 @@ class RerunTopicVisualizer {
                             alignment.mean_m);
     visualizer_->drawScalar(entity_prefix + "/alignment/max_m",
                             alignment.max_m);
-    visualizer_->drawScalar(entity_prefix + "/alignment/yaw_deg",
-                            alignment.yaw_rad * 180.0 / M_PI);
+    visualizer_->drawScalar(entity_prefix + "/alignment/rotation_determinant",
+                            alignment.determinant);
   }
 
   void publishCommonAlignedOverlay() {
@@ -1748,8 +1759,8 @@ class RerunTopicVisualizer {
       return;
     }
 
-    Se2AlignmentEstimate secondary_alignment;
-    Se2AlignmentEstimate kimera_alignment;
+    AlignmentEstimate secondary_alignment;
+    AlignmentEstimate kimera_alignment;
     std::vector<gtsam::Pose3> aligned_secondary_poses;
     std::vector<gtsam::Pose3> aligned_kimera_poses;
     int secondary_pairs = 0;

@@ -81,6 +81,24 @@
   <arg name="cbs_temporary_linear_already_applied_cov_rel_threshold" default="0.001"/>
   <arg name="cbs_d_reset" default="0.1"/>
   <arg name="cbs_l2k_odom_factor_covariance_scale" default="1.0"/>
+  <arg name="cbs_health_aware_enable" default="false"/>
+  <arg name="cbs_health_sender_enable" default="true"/>
+  <arg name="cbs_health_receiver_nis_enable" default="true"/>
+  <arg name="cbs_health_alpha_min" default="1.0"/>
+  <arg name="cbs_health_alpha_max" default="10.0"/>
+  <arg name="cbs_health_alpha_cons_max" default="100.0"/>
+  <arg name="cbs_health_chi2_threshold" default="16.81"/>
+  <arg name="cbs_health_beta_receiver_cov" default="1.0"/>
+  <arg name="cbs_health_w_logdet" default="1.0"/>
+  <arg name="cbs_health_w_lambda" default="0.0"/>
+  <arg name="cbs_health_w_growth" default="1.0"/>
+  <arg name="cbs_health_kappa" default="1.0"/>
+  <arg name="cbs_health_warmup_samples" default="20"/>
+  <arg name="cbs_health_rot_sigma0_rad" default="0.0523598776"/>
+  <arg name="cbs_health_trans_sigma0_m" default="0.10"/>
+  <arg name="cbs_health_floor_rot_sigma_rad" default="0.0174532925"/>
+  <arg name="cbs_health_floor_trans_sigma_m" default="0.03"/>
+  <arg name="cbs_health_eps" default="1e-9"/>
 
   <node if="$(arg decode_left_compressed)"
         pkg="kimera_vio_ros"

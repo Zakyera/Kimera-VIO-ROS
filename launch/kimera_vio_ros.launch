@@ -75,6 +75,24 @@ file and include this one to launch KimeraVIO on the dataset of your choice -->
   <arg name="cbs_temporary_linear_already_applied_cov_rel_threshold" default="0.001"/>
   <arg name="cbs_d_reset" default="0.1"/>
   <arg name="cbs_l2k_odom_factor_covariance_scale" default="1.0"/>
+  <arg name="cbs_health_aware_enable" default="false"/>
+  <arg name="cbs_health_sender_enable" default="true"/>
+  <arg name="cbs_health_receiver_nis_enable" default="true"/>
+  <arg name="cbs_health_alpha_min" default="1.0"/>
+  <arg name="cbs_health_alpha_max" default="10.0"/>
+  <arg name="cbs_health_alpha_cons_max" default="100.0"/>
+  <arg name="cbs_health_chi2_threshold" default="16.81"/>
+  <arg name="cbs_health_beta_receiver_cov" default="1.0"/>
+  <arg name="cbs_health_w_logdet" default="1.0"/>
+  <arg name="cbs_health_w_lambda" default="0.0"/>
+  <arg name="cbs_health_w_growth" default="1.0"/>
+  <arg name="cbs_health_kappa" default="1.0"/>
+  <arg name="cbs_health_warmup_samples" default="20"/>
+  <arg name="cbs_health_rot_sigma0_rad" default="0.0523598776"/>
+  <arg name="cbs_health_trans_sigma0_m" default="0.10"/>
+  <arg name="cbs_health_floor_rot_sigma_rad" default="0.0174532925"/>
+  <arg name="cbs_health_floor_trans_sigma_m" default="0.03"/>
+  <arg name="cbs_health_eps" default="1e-9"/>
   <!-- If true, KimeraVIO will compute a static offset between the
        latest IMU and camera measurement -->
   <arg name="do_coarse_temporal_sync" default="false"/>
@@ -221,7 +239,25 @@ file and include this one to launch KimeraVIO on the dataset of your choice -->
               --cbs_external_odom_duration_ratio_max=$(arg cbs_external_odom_duration_ratio_max)
               --cbs_odom_horizon_sec=$(arg cbs_odom_horizon_sec)
               --cbs_odom_horizon_tolerance_sec=$(arg cbs_odom_horizon_tolerance_sec)
-              --cbs_odom_max_horizon_pairs_per_update=$(arg cbs_odom_max_horizon_pairs_per_update)">
+              --cbs_odom_max_horizon_pairs_per_update=$(arg cbs_odom_max_horizon_pairs_per_update)
+              --cbs_health_aware_enable=$(arg cbs_health_aware_enable)
+              --cbs_health_sender_enable=$(arg cbs_health_sender_enable)
+              --cbs_health_receiver_nis_enable=$(arg cbs_health_receiver_nis_enable)
+              --cbs_health_alpha_min=$(arg cbs_health_alpha_min)
+              --cbs_health_alpha_max=$(arg cbs_health_alpha_max)
+              --cbs_health_alpha_cons_max=$(arg cbs_health_alpha_cons_max)
+              --cbs_health_chi2_threshold=$(arg cbs_health_chi2_threshold)
+              --cbs_health_beta_receiver_cov=$(arg cbs_health_beta_receiver_cov)
+              --cbs_health_w_logdet=$(arg cbs_health_w_logdet)
+              --cbs_health_w_lambda=$(arg cbs_health_w_lambda)
+              --cbs_health_w_growth=$(arg cbs_health_w_growth)
+              --cbs_health_kappa=$(arg cbs_health_kappa)
+              --cbs_health_warmup_samples=$(arg cbs_health_warmup_samples)
+              --cbs_health_rot_sigma0_rad=$(arg cbs_health_rot_sigma0_rad)
+              --cbs_health_trans_sigma0_m=$(arg cbs_health_trans_sigma0_m)
+              --cbs_health_floor_rot_sigma_rad=$(arg cbs_health_floor_rot_sigma_rad)
+              --cbs_health_floor_trans_sigma_m=$(arg cbs_health_floor_trans_sigma_m)
+              --cbs_health_eps=$(arg cbs_health_eps)">
     <param name="image_transport" value="$(arg rgb_image_transport)"/>
     <param name="params_folder_path"    value="$(arg params_folder)"/>
     <param name="sensor_params_folder_path" value="$(arg sensor_folder)"/>
