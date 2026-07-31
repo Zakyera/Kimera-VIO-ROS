@@ -1,6 +1,6 @@
 <launch>
-  <arg name="dataset_name" value="S3EAlphaMonoXfeat"/>
-  <arg name="params_folder" default="$(find kimera_vio)/params/S3EAlphaMonoXfeat"/>
+  <arg name="dataset_name" value="BoreasMono"/>
+  <arg name="params_folder" default="$(find kimera_vio)/params/BoreasMono"/>
   <arg name="multirobot" default="true"/>
   <arg name="verbosity" default="0"/>
   <arg name="do_coarse_temporal_sync" default="false"/>
@@ -12,14 +12,16 @@
   <param name="use_sim_time" value="$(arg should_use_sim_time)"/>
 
   <arg name="log_output" default="false"/>
+  <arg name="log_output_path"
+       default="$(find kimera_vio_ros)/output_logs/$(arg dataset_name)"/>
   <arg name="log_gt_data" default="false"/>
   <arg name="gt_topic" default=""/>
   <arg name="rosbag_path" default="" unless="$(arg online)"/>
 
-  <arg name="left_cam_topic" default="/Alpha/left_camera/image_raw"/>
-  <arg name="left_cam_compressed_topic" default="/Alpha/left_camera/compressed"/>
+  <arg name="left_cam_topic" default="/Boreas/left_camera/image_raw"/>
+  <arg name="left_cam_compressed_topic" default="/Boreas/left_camera/compressed"/>
   <arg name="right_cam_topic" default=""/>
-  <arg name="imu_topic" default="/Alpha/imu/data"/>
+  <arg name="imu_topic" default="/Boreas/imu/data"/>
   <arg name="external_odom_topic" default=""/>
   <arg name="rgb_image_transport" default="raw"/>
   <arg name="decode_left_compressed" default="true"/>
@@ -46,7 +48,7 @@
   <arg name="headless_landmarks_max_points" default="3000"/>
   <arg name="include_pipeline_flags" default="false"/>
   <arg name="pipeline_flagfile"
-       default="$(find kimera_vio)/params/S3EAlphaMonoXfeat/flags/Pipeline.flags"/>
+       default="$(find kimera_vio)/params/BoreasMono/flags/Pipeline.flags"/>
 
   <arg name="cbs_belief_bridge_enable" default="true"/>
   <arg name="cbs_odom_belief_in_topic" default="/kimera/cbs/odom_belief_in"/>
@@ -112,7 +114,7 @@
   <node if="$(arg decode_left_compressed)"
         pkg="kimera_vio_ros"
         type="compressed_to_raw_bridge.py"
-        name="alpha_left_compressed_bridge"
+        name="boreas_left_compressed_bridge"
         output="screen">
     <param name="input_topic" value="$(arg left_cam_compressed_topic)"/>
     <param name="output_topic" value="$(arg left_cam_topic)"/>

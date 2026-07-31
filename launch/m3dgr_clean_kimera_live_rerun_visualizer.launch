@@ -1,0 +1,53 @@
+<launch>
+  <arg name="ground_truth_path"
+       default="/workspace/cbs_gtsam4.3/src/datasets/M3DGR/Dynamic01/Dynamic01.txt"/>
+  <arg name="bag_duration" default="60.0"/>
+  <arg name="rerun_host" default="rerun+http://172.17.0.1:9876/proxy"/>
+  <arg name="rerun_recording_id" default="m3dgr_dynamic01_original_kimera_live"/>
+  <arg name="rerun_world_alignment_enable" default="true"/>
+
+  <node pkg="kimera_vio_ros"
+        type="rerun_topic_visualizer_node"
+        name="rerun_topic_visualizer"
+        output="screen">
+    <param name="rerun_host" value="$(arg rerun_host)"/>
+    <param name="rerun_recording_id" value="$(arg rerun_recording_id)"/>
+    <param name="publish_rate_hz" value="10.0"/>
+    <param name="world_alignment_enable" value="$(arg rerun_world_alignment_enable)"/>
+    <param name="max_trajectory_len" value="10000"/>
+
+    <!-- Use the secondary-estimator path for clean Kimera so the live overlay
+         contains only GT and one aligned Kimera trajectory. -->
+    <param name="liorf_odom_topic" value="/kimera_vio_ros/odometry"/>
+    <param name="secondary_entity_prefix" value="kimera"/>
+    <param name="secondary_frame_name" value="base_link"/>
+    <param name="secondary_uncertainty_scale" value="1.25"/>
+
+    <param name="kimera_odom_topic" value="/m3dgr/unused/raw_kimera_odom"/>
+    <param name="publish_raw_kimera_enable" value="false"/>
+    <param name="publish_secondary_enable" value="false"/>
+    <param name="publish_aligned_kimera_enable" value="false"/>
+    <param name="kimera_landmarks_enable" value="false"/>
+
+    <param name="liorf_point_clouds_enable" value="false"/>
+    <param name="image_stream_enable" value="true"/>
+    <param name="image_topic" value="/camera/color/image_raw/compressed"/>
+    <param name="image_entity_path" value="video/rgb/image"/>
+    <param name="image_max_hz" value="5.0"/>
+    <param name="image_queue_size" value="5"/>
+    <param name="cbs_metrics_enable" value="false"/>
+    <param name="accumulated_covariance_enable" value="false"/>
+    <param name="lag_scalars_enable" value="false"/>
+
+    <param name="ground_truth_enable" value="true"/>
+    <param name="publish_common_aligned_overlay_enable" value="true"/>
+    <param name="anchor_common_aligned_start_enable" value="false"/>
+    <param name="freeze_common_aligned_overlay_alignment_enable" value="true"/>
+    <param name="ground_truth_path" value="$(arg ground_truth_path)"/>
+    <param name="ground_truth_max_timestamp_diff_sec" value="0.1"/>
+    <param name="ground_truth_alignment_min_pairs" value="20"/>
+    <param name="ground_truth_alignment_min_path_length_m" value="5.0"/>
+    <param name="ground_truth_window_duration_sec" value="$(arg bag_duration)"/>
+    <param name="odometry_queue_size" value="2000"/>
+  </node>
+</launch>

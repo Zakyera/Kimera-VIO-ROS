@@ -106,6 +106,21 @@ if(EXISTS "${GTSAM_VENDORED_EIGEN_INCLUDE}/Eigen/Dense")
 endif()
 target_link_libraries(rerun_topic_visualizer_node ${PROJECT_NAME})
 
+cs_add_executable(rerun_image_visualizer_node
+  src/RerunImageVisualizerNode.cpp
+)
+target_include_directories(rerun_image_visualizer_node
+  SYSTEM BEFORE PRIVATE
+    ${OpenCV_INCLUDE_DIRS}
+)
+if(EXISTS "${GTSAM_VENDORED_EIGEN_INCLUDE}/Eigen/Dense")
+  target_include_directories(rerun_image_visualizer_node
+    SYSTEM BEFORE PRIVATE
+      ${GTSAM_VENDORED_EIGEN_INCLUDE}
+  )
+endif()
+target_link_libraries(rerun_image_visualizer_node ${PROJECT_NAME})
+
 cs_add_executable(artifact_rerun_visualizer_node
   src/ArtifactRerunVisualizerNode.cpp
 )

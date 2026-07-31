@@ -90,6 +90,11 @@ double normalizeStamp(double stamp) {
   return stamp;
 }
 
+bool readableFile(const std::string& path) {
+  std::ifstream file(path);
+  return file.good();
+}
+
 Trajectory readTum(const std::string& path) {
   std::ifstream file(path);
   if (!file.is_open()) {
@@ -373,11 +378,13 @@ void drawFullGroundTruth(VIO::RosRerunVisualizer* visualizer,
                          const Eigen::Vector4f& color =
                              Eigen::Vector4f(65.f, 140.f, 255.f, 220.f),
                          const double min_stamp_sec =
-                             -std::numeric_limits<double>::infinity()) {
+                             -std::numeric_limits<double>::infinity(),
+                         const double max_stamp_sec =
+                             std::numeric_limits<double>::infinity()) {
   std::vector<gtsam::Pose3> gt_poses;
   gt_poses.reserve(gt.poses.size());
   for (const TimedPose& pose : gt.poses) {
-    if (pose.stamp_sec < min_stamp_sec) {
+    if (pose.stamp_sec < min_stamp_sec || pose.stamp_sec > max_stamp_sec) {
       continue;
     }
     const Eigen::Vector3d p = pose.pose.translation() - origin;
@@ -554,6 +561,7 @@ int main(int argc, char** argv) {
   bool image_replay_enable = false;
   bool comparison_replay_enable = false;
   bool comparison_start_anchor_enable = false;
+  std::string alignment_mode;
   std::string image_bag_path;
   std::string left_image_topic;
   std::string left_image_entity_path;
@@ -587,6 +595,7 @@ int main(int argc, char** argv) {
       "comparison_replay_enable", comparison_replay_enable, false);
   private_nh.param<bool>(
       "comparison_start_anchor_enable", comparison_start_anchor_enable, false);
+  private_nh.param<std::string>("alignment_mode", alignment_mode, "common_glim");
   private_nh.param<std::string>("cbs_off_run_dir", cbs_off_run_dir, "");
   private_nh.param<std::string>("cbs_on_run_dir", cbs_on_run_dir, "");
   private_nh.param<std::string>(
@@ -647,6 +656,8 @@ int main(int argc, char** argv) {
                             cbs_on.glim_rmse_m);
       visualizer.drawScalar(root + "/metadata/cbs_on_kimera_alignment_rmse_m",
                             cbs_on.kimera_rmse_m);
+      visualizer.drawScalar(root + "/metadata/common_alignment_glim_to_gt",
+                            1.0);
 
       if (draw_ground_truth_static) {
         const Eigen::Vector3d gt_origin =
@@ -659,37 +670,37 @@ int main(int argc, char** argv) {
                             start_nsec,
                             root + "/ground_truth/trajectory",
                             Eigen::Vector4f(65.f, 140.f, 255.f, 235.f),
-                            comparison_start_anchor_enable
-                                ? first_stamp
-                                : -std::numeric_limits<double>::infinity());
+                            first_stamp,
+                            last_stamp);
       }
 
       std::vector<PlaybackEvent> events;
       events.reserve(cbs_off.glim.poses.size() + cbs_off.kimera.poses.size() +
                      cbs_on.glim.poses.size() + cbs_on.kimera.poses.size());
+      const Alignment common_alignment = cbs_on.glim_alignment;
       appendTrajectoryEvents(cbs_off.glim,
-                             cbs_off.glim_alignment,
+                             common_alignment,
                              "cbs_off_glim",
                              root + "/cbs_off/glim",
                              "metrics/posterior_covariance/cbs_off/glim",
                              Eigen::Vector4f(255.f, 165.f, 0.f, 220.f),
                              &events);
       appendTrajectoryEvents(cbs_off.kimera,
-                             cbs_off.kimera_alignment,
+                             common_alignment,
                              "cbs_off_kimera",
                              root + "/cbs_off/kimera",
                              "metrics/posterior_covariance/cbs_off/kimera",
                              Eigen::Vector4f(245.f, 70.f, 70.f, 220.f),
                              &events);
       appendTrajectoryEvents(cbs_on.glim,
-                             cbs_on.glim_alignment,
+                             common_alignment,
                              "cbs_on_glim",
                              root + "/cbs_on/glim",
                              "metrics/posterior_covariance/cbs_on/glim",
                              Eigen::Vector4f(245.f, 220.f, 40.f, 235.f),
                              &events);
       appendTrajectoryEvents(cbs_on.kimera,
-                             cbs_on.kimera_alignment,
+                             common_alignment,
                              "cbs_on_kimera",
                              root + "/cbs_on/kimera",
                              "metrics/posterior_covariance/cbs_on/kimera",
@@ -803,24 +814,37 @@ int main(int argc, char** argv) {
 
     const std::string tum_dir = run_dir + "/trajectories/tum";
     const std::string trajectory_dir = run_dir + "/trajectories";
+    const std::string kimera_csv_path = trajectory_dir + "/kimera_odometry.csv";
 
     const Trajectory gt = readTum(tum_dir + "/ground_truth.tum");
     const Trajectory glim = readOdometryCsv(trajectory_dir + "/glim_odometry.csv");
+    const bool has_kimera = readableFile(kimera_csv_path);
     const Trajectory kimera =
-        readOdometryCsv(trajectory_dir + "/kimera_odometry.csv");
+        has_kimera ? readOdometryCsv(kimera_csv_path) : Trajectory{};
+    if (!has_kimera) {
+      ROS_WARN_STREAM("No Kimera odometry artifact found at " << kimera_csv_path
+                      << "; replaying GLIM and ground truth only.");
+    }
 
     int glim_pairs = 0;
     int kimera_pairs = 0;
     double glim_rmse_m = 0.0;
-    double kimera_rmse_m = 0.0;
+    double kimera_rmse_m = std::numeric_limits<double>::quiet_NaN();
     const Alignment glim_alignment = estimateAlignmentToGroundTruth(
         glim, gt, max_association_diff_sec, &glim_pairs, &glim_rmse_m);
-    const Alignment kimera_alignment = estimateAlignmentToGroundTruth(
-        kimera, gt, max_association_diff_sec, &kimera_pairs, &kimera_rmse_m);
+    const Alignment kimera_alignment =
+        has_kimera
+            ? estimateAlignmentToGroundTruth(
+                  kimera, gt, max_association_diff_sec, &kimera_pairs, &kimera_rmse_m)
+            : Alignment{};
 
     double first_stamp = std::numeric_limits<double>::infinity();
     double last_stamp = 0.0;
-    for (const auto* trajectory : {&glim, &kimera}) {
+    std::vector<const Trajectory*> replay_trajectories{&glim};
+    if (has_kimera) {
+      replay_trajectories.push_back(&kimera);
+    }
+    for (const auto* trajectory : replay_trajectories) {
       first_stamp = std::min(first_stamp, trajectory->poses.front().stamp_sec);
       last_stamp = std::max(last_stamp, trajectory->poses.back().stamp_sec);
     }
@@ -836,36 +860,65 @@ int main(int argc, char** argv) {
     const uint64_t start_nsec = stampSecToNSec(first_stamp);
     visualizer.setTimeNSec(start_nsec);
     visualizer.drawScalar("aligned/metadata/glim_alignment_pairs", glim_pairs);
-    visualizer.drawScalar("aligned/metadata/kimera_alignment_pairs", kimera_pairs);
     visualizer.drawScalar("aligned/metadata/glim_alignment_rmse_m", glim_rmse_m);
-    visualizer.drawScalar("aligned/metadata/kimera_alignment_rmse_m",
-                          kimera_rmse_m);
+    if (has_kimera) {
+      visualizer.drawScalar("aligned/metadata/kimera_alignment_pairs", kimera_pairs);
+      visualizer.drawScalar("aligned/metadata/kimera_alignment_rmse_m",
+                            kimera_rmse_m);
+    }
+    bool metric_per_estimator_alignment = false;
+    if (alignment_mode == "metric_per_estimator" ||
+        alignment_mode == "evo_per_estimator" ||
+        alignment_mode == "per_estimator") {
+      metric_per_estimator_alignment = true;
+    } else if (alignment_mode != "common_glim" && alignment_mode != "common") {
+      ROS_WARN_STREAM("Unknown artifact replay alignment_mode='"
+                      << alignment_mode
+                      << "'. Falling back to common_glim.");
+      alignment_mode = "common_glim";
+    }
+    visualizer.drawScalar("aligned/metadata/common_alignment_glim_to_gt",
+                          metric_per_estimator_alignment ? 0.0 : 1.0);
+    visualizer.drawScalar("aligned/metadata/metric_per_estimator_alignment",
+                          metric_per_estimator_alignment ? 1.0 : 0.0);
 
     if (draw_ground_truth_static) {
-      drawFullGroundTruth(&visualizer, gt, origin, start_nsec);
+      drawFullGroundTruth(&visualizer,
+                          gt,
+                          origin,
+                          start_nsec,
+                          "aligned/ground_truth/trajectory",
+                          Eigen::Vector4f(65.f, 140.f, 255.f, 220.f),
+                          first_stamp,
+                          last_stamp);
     }
 
     std::vector<PlaybackEvent> events;
     events.reserve(glim.poses.size() + kimera.poses.size());
+    const Alignment glim_event_alignment = glim_alignment;
+    const Alignment kimera_event_alignment =
+        metric_per_estimator_alignment ? kimera_alignment : glim_alignment;
     for (const TimedPose& pose : glim.poses) {
       PlaybackEvent event;
       event.stamp_sec = pose.stamp_sec;
       event.kind = PlaybackEvent::Kind::kPose;
       event.name = "glim";
       event.pose = pose;
-      event.alignment = glim_alignment;
+      event.alignment = glim_event_alignment;
       event.color = Eigen::Vector4f(245.f, 180.f, 20.f, 220.f);
       events.push_back(event);
     }
-    for (const TimedPose& pose : kimera.poses) {
-      PlaybackEvent event;
-      event.stamp_sec = pose.stamp_sec;
-      event.kind = PlaybackEvent::Kind::kPose;
-      event.name = "kimera";
-      event.pose = pose;
-      event.alignment = kimera_alignment;
-      event.color = Eigen::Vector4f(40.f, 220.f, 80.f, 220.f);
-      events.push_back(event);
+    if (has_kimera) {
+      for (const TimedPose& pose : kimera.poses) {
+        PlaybackEvent event;
+        event.stamp_sec = pose.stamp_sec;
+        event.kind = PlaybackEvent::Kind::kPose;
+        event.name = "kimera";
+        event.pose = pose;
+        event.alignment = kimera_event_alignment;
+        event.color = Eigen::Vector4f(40.f, 220.f, 80.f, 220.f);
+        events.push_back(event);
+      }
     }
 
     size_t image_count = 0u;
@@ -964,9 +1017,12 @@ int main(int argc, char** argv) {
     visualizer.drawScalar("aligned/metadata/replay_complete", 1.0);
     ROS_INFO_STREAM("Artifact aligned Rerun replay complete. recording_id='"
                     << recording_id << "', glim_poses=" << glim.poses.size()
-                    << ", kimera_poses=" << kimera.poses.size()
+                    << ", kimera_poses="
+                    << (has_kimera ? std::to_string(kimera.poses.size()) : "n/a")
                     << ", glim_pairs=" << glim_pairs
-                    << ", kimera_pairs=" << kimera_pairs
+                    << ", kimera_pairs="
+                    << (has_kimera ? std::to_string(kimera_pairs) : "n/a")
+                    << ", alignment_mode='" << alignment_mode << "'"
                     << ", images=" << image_count << ".");
   } catch (const std::exception& e) {
     ROS_FATAL_STREAM("Artifact aligned Rerun replay failed: " << e.what());

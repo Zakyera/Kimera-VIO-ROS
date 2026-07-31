@@ -556,6 +556,13 @@ void RosVisualizer::publishRerunBackendOutput(
   rerun_visualizer_->drawScalar("kimera/keyframe_id", output->cur_kf_id_);
   rerun_visualizer_->drawScalar("kimera/timing/optimization_ms",
                                 output->optimization_time_sec_ * 1000.0);
+  rerun_visualizer_->drawScalar("kimera/timing/optimize_total_ms",
+                                output->optimize_total_time_sec_ * 1000.0);
+  rerun_visualizer_->drawScalar("kimera/timing/smoother_update_ms",
+                                output->optimization_time_sec_ * 1000.0);
+  rerun_visualizer_->drawScalar(
+      "kimera/timing/compute_state_covariance_ms",
+      output->compute_state_covariance_time_sec_ * 1000.0);
   if (cbs_belief_bridge_enable_) {
     rerun_visualizer_->drawScalar(
         "kimera/cbs/beliefs/published_per_update",
@@ -584,6 +591,18 @@ void RosVisualizer::publishRerunBackendOutput(
     rerun_visualizer_->drawScalar(
         "kimera/cbs/timing/belief_generation_ms",
         output->cbs_belief_generation_time_sec_ * 1000.0);
+    rerun_visualizer_->drawScalar(
+        "kimera/cbs/timing/collect_external_beliefs_ms",
+        output->collect_external_beliefs_time_sec_ * 1000.0);
+    rerun_visualizer_->drawScalar(
+        "kimera/cbs/timing/outgoing_total_ms",
+        output->cbs_outgoing_total_time_sec_ * 1000.0);
+    rerun_visualizer_->drawScalar(
+        "kimera/cbs/timing/set_marginalization_graph_ms",
+        output->cbs_set_marginalization_graph_time_sec_ * 1000.0);
+    rerun_visualizer_->drawScalar(
+        "kimera/cbs/timing/get_odometry_beliefs_ms",
+        output->cbs_get_odometry_beliefs_time_sec_ * 1000.0);
     rerun_visualizer_->drawScalar(
         "kimera/cbs/marginalization_graph/factor_count",
         output->cbs_marginalization_graph_factor_count_);

@@ -68,6 +68,9 @@ class KimeraVioRos {
   void publishHeadlessRerunBackendOutput(
       const BackendOutput::ConstPtr& output);
 
+  void publishKimeraFactorGraphInspector(
+      const BackendOutput::ConstPtr& output);
+
   void publishHeadlessOdometryBelief(const BackendOutput::ConstPtr& output);
 
   void poseOdomBeliefInCallback(
@@ -133,6 +136,10 @@ class KimeraVioRos {
   bool headless_rerun_scalar_metrics_enable_ = false;
   bool headless_rerun_geometry_enable_ = true;
   bool headless_rerun_factor_graph_enable_ = true;
+  bool headless_rerun_factor_graph_inspector_enable_ = false;
+  int headless_rerun_factor_graph_inspector_stride_ = 5;
+  bool headless_rerun_factor_graph_inspector_include_smart_factors_ = false;
+  int headless_rerun_factor_graph_inspector_max_smart_factors_ = 1000;
   std::string odom_frame_id_;
   std::string base_link_frame_id_;
   std::string headless_rerun_recording_id_;

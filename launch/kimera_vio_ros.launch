@@ -69,6 +69,16 @@ file and include this one to launch KimeraVIO on the dataset of your choice -->
   <arg name="cbs_use_raw_previous_belief_gate" default="false"/>
   <arg name="cbs_reject_first_message" default="true"/>
   <arg name="cbs_use_temporary_cbs_linear_factors" default="true"/>
+  <arg name="cbs_odom_factor_mode" default="legacy"/>
+  <arg name="cbs_odom_covariance_mode" default="schur_relative_between"/>
+  <arg name="cbs_relative_covariance_matrix_dump_enable" default="false"/>
+  <arg name="cbs_relative_covariance_matrix_dump_skip" default="0"/>
+  <arg name="cbs_relative_covariance_matrix_dump_limit" default="3"/>
+  <arg name="cbs_relative_covariance_matrix_dump_trace_max" default="0.0"/>
+  <arg name="cbs_active_factor_detail_diagnostic_enable" default="false"/>
+  <arg name="cbs_active_factor_detail_max_rows_per_update" default="1000"/>
+  <arg name="kimera_factor_graph_audit_enable" default="false"/>
+  <arg name="kimera_shadow_acceptance_audit_enable" default="false"/>
   <arg name="cbs_temporary_linear_already_applied_gate_enable" default="true"/>
   <arg name="cbs_temporary_linear_already_applied_metric_threshold" default="0.01"/>
   <arg name="cbs_temporary_linear_already_applied_dmu_threshold" default="0.001"/>
@@ -83,6 +93,13 @@ file and include this one to launch KimeraVIO on the dataset of your choice -->
   <arg name="cbs_health_alpha_cons_max" default="100.0"/>
   <arg name="cbs_health_chi2_threshold" default="16.81"/>
   <arg name="cbs_health_beta_receiver_cov" default="1.0"/>
+  <arg name="cbs_health_relative_trust_enable" default="false"/>
+  <arg name="cbs_health_relative_trust_calibrated_enable" default="false"/>
+  <arg name="cbs_health_relative_trust_kappa" default="1.0"/>
+  <arg name="cbs_health_relative_trust_min_weight" default="0.20"/>
+  <arg name="cbs_health_relative_trust_max_weight" default="5.0"/>
+  <arg name="cbs_health_relative_trust_deadband" default="0.0"/>
+  <arg name="cbs_health_relative_trust_warmup_samples" default="20"/>
   <arg name="cbs_health_w_logdet" default="1.0"/>
   <arg name="cbs_health_w_lambda" default="0.0"/>
   <arg name="cbs_health_w_growth" default="1.0"/>
@@ -93,6 +110,29 @@ file and include this one to launch KimeraVIO on the dataset of your choice -->
   <arg name="cbs_health_floor_rot_sigma_rad" default="0.0174532925"/>
   <arg name="cbs_health_floor_trans_sigma_m" default="0.03"/>
   <arg name="cbs_health_eps" default="1e-9"/>
+  <arg name="cbs_sender_health_alpha_min" default="-1.0"/>
+  <arg name="cbs_sender_health_alpha_max" default="-1.0"/>
+  <arg name="cbs_sender_health_w_logdet" default="-1.0"/>
+  <arg name="cbs_sender_health_w_lambda" default="-1.0"/>
+  <arg name="cbs_sender_health_w_growth" default="-1.0"/>
+  <arg name="cbs_sender_health_kappa" default="-1.0"/>
+  <arg name="cbs_sender_health_warmup_samples" default="-1"/>
+  <arg name="cbs_sender_health_rot_sigma0_rad" default="-1.0"/>
+  <arg name="cbs_sender_health_trans_sigma0_m" default="-1.0"/>
+  <arg name="cbs_sender_health_floor_rot_sigma_rad" default="-1.0"/>
+  <arg name="cbs_sender_health_floor_trans_sigma_m" default="-1.0"/>
+  <arg name="cbs_sender_health_eps" default="-1.0"/>
+  <arg name="cbs_receiver_health_alpha_cons_max" default="-1.0"/>
+  <arg name="cbs_receiver_health_chi2_threshold" default="-1.0"/>
+  <arg name="cbs_receiver_health_beta_receiver_cov" default="-1.0"/>
+  <arg name="cbs_receiver_health_relative_trust_kappa" default="-1.0"/>
+  <arg name="cbs_receiver_health_relative_trust_min_weight" default="-1.0"/>
+  <arg name="cbs_receiver_health_relative_trust_max_weight" default="-1.0"/>
+  <arg name="cbs_receiver_health_relative_trust_deadband" default="-1.0"/>
+  <arg name="cbs_receiver_health_relative_trust_warmup_samples" default="-1"/>
+  <arg name="cbs_receiver_health_floor_rot_sigma_rad" default="-1.0"/>
+  <arg name="cbs_receiver_health_floor_trans_sigma_m" default="-1.0"/>
+  <arg name="cbs_receiver_health_eps" default="-1.0"/>
   <!-- If true, KimeraVIO will compute a static offset between the
        latest IMU and camera measurement -->
   <arg name="do_coarse_temporal_sync" default="false"/>
@@ -156,6 +196,11 @@ file and include this one to launch KimeraVIO on the dataset of your choice -->
   <arg name="rerun_scalar_metrics_enable" default="false"/>
   <arg name="rerun_geometry_enable" default="true"/>
   <arg name="rerun_factor_graph_enable" default="true"/>
+  <arg name="rerun_factor_graph_inspector_enable" default="false"/>
+  <arg name="rerun_factor_graph_inspector_stride" default="5"/>
+  <arg name="rerun_factor_graph_inspector_include_smart_factors"
+       default="false"/>
+  <arg name="rerun_factor_graph_inspector_max_smart_factors" default="1000"/>
   <arg name="rerun_world_alignment_enable" default="true"/>
   <arg name="headless_landmarks_publish_enable" default="false"/>
   <arg name="headless_landmarks_max_points" default="3000"/>
@@ -222,6 +267,16 @@ file and include this one to launch KimeraVIO on the dataset of your choice -->
               --cbs_use_raw_previous_belief_gate=$(arg cbs_use_raw_previous_belief_gate)
               --cbs_reject_first_message=$(arg cbs_reject_first_message)
               --cbs_use_temporary_cbs_linear_factors=$(arg cbs_use_temporary_cbs_linear_factors)
+              --cbs_odom_factor_mode=$(arg cbs_odom_factor_mode)
+              --cbs_odom_covariance_mode=$(arg cbs_odom_covariance_mode)
+              --cbs_relative_covariance_matrix_dump_enable=$(arg cbs_relative_covariance_matrix_dump_enable)
+              --cbs_relative_covariance_matrix_dump_skip=$(arg cbs_relative_covariance_matrix_dump_skip)
+              --cbs_relative_covariance_matrix_dump_limit=$(arg cbs_relative_covariance_matrix_dump_limit)
+              --cbs_relative_covariance_matrix_dump_trace_max=$(arg cbs_relative_covariance_matrix_dump_trace_max)
+              --cbs_active_factor_detail_diagnostic_enable=$(arg cbs_active_factor_detail_diagnostic_enable)
+              --cbs_active_factor_detail_max_rows_per_update=$(arg cbs_active_factor_detail_max_rows_per_update)
+              --kimera_factor_graph_audit_enable=$(arg kimera_factor_graph_audit_enable)
+              --kimera_shadow_acceptance_audit_enable=$(arg kimera_shadow_acceptance_audit_enable)
               --cbs_temporary_linear_already_applied_gate_enable=$(arg cbs_temporary_linear_already_applied_gate_enable)
               --cbs_temporary_linear_already_applied_metric_threshold=$(arg cbs_temporary_linear_already_applied_metric_threshold)
               --cbs_temporary_linear_already_applied_dmu_threshold=$(arg cbs_temporary_linear_already_applied_dmu_threshold)
@@ -248,6 +303,13 @@ file and include this one to launch KimeraVIO on the dataset of your choice -->
               --cbs_health_alpha_cons_max=$(arg cbs_health_alpha_cons_max)
               --cbs_health_chi2_threshold=$(arg cbs_health_chi2_threshold)
               --cbs_health_beta_receiver_cov=$(arg cbs_health_beta_receiver_cov)
+              --cbs_health_relative_trust_enable=$(arg cbs_health_relative_trust_enable)
+              --cbs_health_relative_trust_calibrated_enable=$(arg cbs_health_relative_trust_calibrated_enable)
+              --cbs_health_relative_trust_kappa=$(arg cbs_health_relative_trust_kappa)
+              --cbs_health_relative_trust_min_weight=$(arg cbs_health_relative_trust_min_weight)
+              --cbs_health_relative_trust_max_weight=$(arg cbs_health_relative_trust_max_weight)
+              --cbs_health_relative_trust_deadband=$(arg cbs_health_relative_trust_deadband)
+              --cbs_health_relative_trust_warmup_samples=$(arg cbs_health_relative_trust_warmup_samples)
               --cbs_health_w_logdet=$(arg cbs_health_w_logdet)
               --cbs_health_w_lambda=$(arg cbs_health_w_lambda)
               --cbs_health_w_growth=$(arg cbs_health_w_growth)
@@ -257,7 +319,30 @@ file and include this one to launch KimeraVIO on the dataset of your choice -->
               --cbs_health_trans_sigma0_m=$(arg cbs_health_trans_sigma0_m)
               --cbs_health_floor_rot_sigma_rad=$(arg cbs_health_floor_rot_sigma_rad)
               --cbs_health_floor_trans_sigma_m=$(arg cbs_health_floor_trans_sigma_m)
-              --cbs_health_eps=$(arg cbs_health_eps)">
+              --cbs_health_eps=$(arg cbs_health_eps)
+              --cbs_sender_health_alpha_min=$(arg cbs_sender_health_alpha_min)
+              --cbs_sender_health_alpha_max=$(arg cbs_sender_health_alpha_max)
+              --cbs_sender_health_w_logdet=$(arg cbs_sender_health_w_logdet)
+              --cbs_sender_health_w_lambda=$(arg cbs_sender_health_w_lambda)
+              --cbs_sender_health_w_growth=$(arg cbs_sender_health_w_growth)
+              --cbs_sender_health_kappa=$(arg cbs_sender_health_kappa)
+              --cbs_sender_health_warmup_samples=$(arg cbs_sender_health_warmup_samples)
+              --cbs_sender_health_rot_sigma0_rad=$(arg cbs_sender_health_rot_sigma0_rad)
+              --cbs_sender_health_trans_sigma0_m=$(arg cbs_sender_health_trans_sigma0_m)
+              --cbs_sender_health_floor_rot_sigma_rad=$(arg cbs_sender_health_floor_rot_sigma_rad)
+              --cbs_sender_health_floor_trans_sigma_m=$(arg cbs_sender_health_floor_trans_sigma_m)
+              --cbs_sender_health_eps=$(arg cbs_sender_health_eps)
+              --cbs_receiver_health_alpha_cons_max=$(arg cbs_receiver_health_alpha_cons_max)
+              --cbs_receiver_health_chi2_threshold=$(arg cbs_receiver_health_chi2_threshold)
+              --cbs_receiver_health_beta_receiver_cov=$(arg cbs_receiver_health_beta_receiver_cov)
+              --cbs_receiver_health_relative_trust_kappa=$(arg cbs_receiver_health_relative_trust_kappa)
+              --cbs_receiver_health_relative_trust_min_weight=$(arg cbs_receiver_health_relative_trust_min_weight)
+              --cbs_receiver_health_relative_trust_max_weight=$(arg cbs_receiver_health_relative_trust_max_weight)
+              --cbs_receiver_health_relative_trust_deadband=$(arg cbs_receiver_health_relative_trust_deadband)
+              --cbs_receiver_health_relative_trust_warmup_samples=$(arg cbs_receiver_health_relative_trust_warmup_samples)
+              --cbs_receiver_health_floor_rot_sigma_rad=$(arg cbs_receiver_health_floor_rot_sigma_rad)
+              --cbs_receiver_health_floor_trans_sigma_m=$(arg cbs_receiver_health_floor_trans_sigma_m)
+              --cbs_receiver_health_eps=$(arg cbs_receiver_health_eps)">
     <param name="image_transport" value="$(arg rgb_image_transport)"/>
     <param name="params_folder_path"    value="$(arg params_folder)"/>
     <param name="sensor_params_folder_path" value="$(arg sensor_folder)"/>
@@ -286,6 +371,14 @@ file and include this one to launch KimeraVIO on the dataset of your choice -->
            value="$(arg rerun_geometry_enable)"/>
     <param name="rerun_factor_graph_enable"
            value="$(arg rerun_factor_graph_enable)"/>
+    <param name="rerun_factor_graph_inspector_enable"
+           value="$(arg rerun_factor_graph_inspector_enable)"/>
+    <param name="rerun_factor_graph_inspector_stride"
+           value="$(arg rerun_factor_graph_inspector_stride)"/>
+    <param name="rerun_factor_graph_inspector_include_smart_factors"
+           value="$(arg rerun_factor_graph_inspector_include_smart_factors)"/>
+    <param name="rerun_factor_graph_inspector_max_smart_factors"
+           value="$(arg rerun_factor_graph_inspector_max_smart_factors)"/>
     <param name="rerun_world_alignment_enable"
            value="$(arg rerun_world_alignment_enable)"/>
     <param name="headless_landmarks_publish_enable"

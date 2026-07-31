@@ -1,33 +1,34 @@
 <launch>
-  <arg name="dataset_name" value="S3EAlphaMonoXfeat"/>
-  <arg name="params_folder" default="$(find kimera_vio)/params/S3EAlphaMonoXfeat"/>
+  <arg name="dataset_name" value="M3DGRMonoOriginal"/>
+  <arg name="params_folder" default="$(find kimera_vio)/params/M3DGRMonoOriginal"/>
   <arg name="multirobot" default="true"/>
   <arg name="verbosity" default="0"/>
   <arg name="do_coarse_temporal_sync" default="false"/>
   <arg name="do_fine_temporal_sync" default="false"/>
 
-  <!-- Set online to true if rosbag play or live sensors are used. -->
   <arg name="online" default="true"/>
   <arg name="should_use_sim_time" default="true"/>
   <param name="use_sim_time" value="$(arg should_use_sim_time)"/>
 
   <arg name="log_output" default="false"/>
+  <arg name="log_output_path"
+       default="$(find kimera_vio_ros)/output_logs/$(arg dataset_name)"/>
   <arg name="log_gt_data" default="false"/>
   <arg name="gt_topic" default=""/>
   <arg name="rosbag_path" default="" unless="$(arg online)"/>
 
-  <arg name="left_cam_topic" default="/Alpha/left_camera/image_raw"/>
-  <arg name="left_cam_compressed_topic" default="/Alpha/left_camera/compressed"/>
+  <arg name="left_cam_topic" default="/m3dgr/camera/color/image_raw"/>
+  <arg name="left_cam_compressed_topic" default="/camera/color/image_raw/compressed"/>
   <arg name="right_cam_topic" default=""/>
-  <arg name="imu_topic" default="/Alpha/imu/data"/>
+  <arg name="imu_topic" default="/camera/imu"/>
   <arg name="external_odom_topic" default=""/>
   <arg name="rgb_image_transport" default="raw"/>
   <arg name="decode_left_compressed" default="true"/>
 
   <arg name="odom_frame_id" default="odom"/>
-  <arg name="base_link_frame_id" default="imu_link"/>
+  <arg name="base_link_frame_id" default="camera_imu_link"/>
   <arg name="map_frame_id" default="map"/>
-  <arg name="left_cam_frame_id" default="left_camera"/>
+  <arg name="left_cam_frame_id" default="camera_color_optical_frame"/>
   <arg name="right_cam_frame_id" default="right_camera"/>
 
   <arg name="use_lcd" default="false"/>
@@ -37,16 +38,21 @@
   <arg name="no_incremental_pose" default="false"/>
   <arg name="rerun_visualizer_enable" default="true"/>
   <arg name="rerun_recording_id" default=""/>
-  <arg name="rerun_host" default="rerun+http://172.18.0.1:9876/proxy"/>
+  <arg name="rerun_host" default="rerun+http://172.17.0.1:9876/proxy"/>
   <arg name="rerun_scalar_metrics_enable" default="false"/>
   <arg name="rerun_geometry_enable" default="true"/>
   <arg name="rerun_factor_graph_enable" default="true"/>
+  <arg name="rerun_factor_graph_inspector_enable" default="false"/>
+  <arg name="rerun_factor_graph_inspector_stride" default="5"/>
+  <arg name="rerun_factor_graph_inspector_include_smart_factors"
+       default="false"/>
+  <arg name="rerun_factor_graph_inspector_max_smart_factors" default="1000"/>
   <arg name="rerun_world_alignment_enable" default="true"/>
   <arg name="headless_landmarks_publish_enable" default="false"/>
   <arg name="headless_landmarks_max_points" default="3000"/>
   <arg name="include_pipeline_flags" default="false"/>
   <arg name="pipeline_flagfile"
-       default="$(find kimera_vio)/params/S3EAlphaMonoXfeat/flags/Pipeline.flags"/>
+       default="$(find kimera_vio)/params/M3DGRMonoOriginal/flags/Pipeline.flags"/>
 
   <arg name="cbs_belief_bridge_enable" default="true"/>
   <arg name="cbs_odom_belief_in_topic" default="/kimera/cbs/odom_belief_in"/>
@@ -54,11 +60,11 @@
   <arg name="cbs_belief_forward_queue_limit" default="800"/>
   <arg name="cbs_belief_receive_start_delay_sec" default="0.0"/>
   <arg name="cbs_external_belief_timestamp_tolerance_sec" default="0.2"/>
-  <arg name="cbs_external_pose_frame_id" default="imu_link"/>
+  <arg name="cbs_external_pose_frame_id" default="camera_imu_link"/>
   <arg name="cbs_odom_unmatched_retry_max_age_sec" default="5.0"/>
   <arg name="cbs_odom_unmatched_retry_max_beliefs" default="500"/>
   <arg name="cbs_odom_sender_mode" default="adjacent_window"/>
-  <arg name="cbs_odom_requesting_agent_id" default="l"/>
+  <arg name="cbs_odom_requesting_agent_id" default="g"/>
   <arg name="cbs_external_odom_duration_gate_enable" default="false"/>
   <arg name="cbs_external_odom_duration_tolerance_sec" default="0.06"/>
   <arg name="cbs_external_odom_duration_ratio_min" default="0.5"/>
@@ -77,6 +83,15 @@
   <arg name="cbs_reject_first_message" default="true"/>
   <arg name="cbs_use_temporary_cbs_linear_factors" default="true"/>
   <arg name="cbs_odom_factor_mode" default="legacy"/>
+  <arg name="cbs_odom_covariance_mode" default="schur_relative_between"/>
+  <arg name="cbs_relative_covariance_matrix_dump_enable" default="false"/>
+  <arg name="cbs_relative_covariance_matrix_dump_skip" default="0"/>
+  <arg name="cbs_relative_covariance_matrix_dump_limit" default="3"/>
+  <arg name="cbs_relative_covariance_matrix_dump_trace_max" default="0.0"/>
+  <arg name="cbs_active_factor_detail_diagnostic_enable" default="false"/>
+  <arg name="cbs_active_factor_detail_max_rows_per_update" default="1000"/>
+  <arg name="kimera_factor_graph_audit_enable" default="false"/>
+  <arg name="kimera_shadow_acceptance_audit_enable" default="false"/>
   <arg name="cbs_temporary_linear_already_applied_gate_enable" default="true"/>
   <arg name="cbs_temporary_linear_already_applied_metric_threshold" default="0.01"/>
   <arg name="cbs_temporary_linear_already_applied_dmu_threshold" default="0.001"/>
@@ -108,11 +123,34 @@
   <arg name="cbs_health_floor_rot_sigma_rad" default="0.0174532925"/>
   <arg name="cbs_health_floor_trans_sigma_m" default="0.03"/>
   <arg name="cbs_health_eps" default="1e-9"/>
+  <arg name="cbs_sender_health_alpha_min" default="$(arg cbs_health_alpha_min)"/>
+  <arg name="cbs_sender_health_alpha_max" default="$(arg cbs_health_alpha_max)"/>
+  <arg name="cbs_sender_health_w_logdet" default="$(arg cbs_health_w_logdet)"/>
+  <arg name="cbs_sender_health_w_lambda" default="$(arg cbs_health_w_lambda)"/>
+  <arg name="cbs_sender_health_w_growth" default="$(arg cbs_health_w_growth)"/>
+  <arg name="cbs_sender_health_kappa" default="$(arg cbs_health_kappa)"/>
+  <arg name="cbs_sender_health_warmup_samples" default="$(arg cbs_health_warmup_samples)"/>
+  <arg name="cbs_sender_health_rot_sigma0_rad" default="$(arg cbs_health_rot_sigma0_rad)"/>
+  <arg name="cbs_sender_health_trans_sigma0_m" default="$(arg cbs_health_trans_sigma0_m)"/>
+  <arg name="cbs_sender_health_floor_rot_sigma_rad" default="$(arg cbs_health_floor_rot_sigma_rad)"/>
+  <arg name="cbs_sender_health_floor_trans_sigma_m" default="$(arg cbs_health_floor_trans_sigma_m)"/>
+  <arg name="cbs_sender_health_eps" default="$(arg cbs_health_eps)"/>
+  <arg name="cbs_receiver_health_alpha_cons_max" default="$(arg cbs_health_alpha_cons_max)"/>
+  <arg name="cbs_receiver_health_chi2_threshold" default="$(arg cbs_health_chi2_threshold)"/>
+  <arg name="cbs_receiver_health_beta_receiver_cov" default="$(arg cbs_health_beta_receiver_cov)"/>
+  <arg name="cbs_receiver_health_relative_trust_kappa" default="$(arg cbs_health_relative_trust_kappa)"/>
+  <arg name="cbs_receiver_health_relative_trust_min_weight" default="$(arg cbs_health_relative_trust_min_weight)"/>
+  <arg name="cbs_receiver_health_relative_trust_max_weight" default="$(arg cbs_health_relative_trust_max_weight)"/>
+  <arg name="cbs_receiver_health_relative_trust_deadband" default="$(arg cbs_health_relative_trust_deadband)"/>
+  <arg name="cbs_receiver_health_relative_trust_warmup_samples" default="$(arg cbs_health_relative_trust_warmup_samples)"/>
+  <arg name="cbs_receiver_health_floor_rot_sigma_rad" default="$(arg cbs_health_floor_rot_sigma_rad)"/>
+  <arg name="cbs_receiver_health_floor_trans_sigma_m" default="$(arg cbs_health_floor_trans_sigma_m)"/>
+  <arg name="cbs_receiver_health_eps" default="$(arg cbs_health_eps)"/>
 
   <node if="$(arg decode_left_compressed)"
         pkg="kimera_vio_ros"
         type="compressed_to_raw_bridge.py"
-        name="alpha_left_compressed_bridge"
+        name="m3dgr_left_compressed_bridge"
         output="screen">
     <param name="input_topic" value="$(arg left_cam_compressed_topic)"/>
     <param name="output_topic" value="$(arg left_cam_topic)"/>

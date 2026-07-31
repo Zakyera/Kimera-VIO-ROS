@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import rospy
+import cv2
 from cv_bridge import CvBridge, CvBridgeError
 from sensor_msgs.msg import CompressedImage, Image
 
@@ -27,8 +28,30 @@ class CompressedToRawBridge:
   def callback(self, msg):
     try:
       cv_img = self.bridge.compressed_imgmsg_to_cv2(
-          msg, desired_encoding=self.output_encoding
+          msg, desired_encoding="passthrough"
       )
+      if self.output_encoding == "mono8":
+        if cv_img.ndim == 3 and cv_img.shape[2] == 3:
+          cv_img = cv2.cvtColor(cv_img, cv2.COLOR_BGR2GRAY)
+        elif cv_img.ndim == 3 and cv_img.shape[2] == 4:
+          cv_img = cv2.cvtColor(cv_img, cv2.COLOR_BGRA2GRAY)
+        elif cv_img.ndim != 2:
+          raise CvBridgeError(
+              "unsupported image shape for mono8: %s" % (cv_img.shape,)
+          )
+      elif self.output_encoding == "bgr8":
+        if cv_img.ndim == 2:
+          cv_img = cv2.cvtColor(cv_img, cv2.COLOR_GRAY2BGR)
+        elif cv_img.ndim == 3 and cv_img.shape[2] == 4:
+          cv_img = cv2.cvtColor(cv_img, cv2.COLOR_BGRA2BGR)
+        elif not (cv_img.ndim == 3 and cv_img.shape[2] == 3):
+          raise CvBridgeError(
+              "unsupported image shape for bgr8: %s" % (cv_img.shape,)
+          )
+      elif self.output_encoding != "passthrough":
+        cv_img = self.bridge.compressed_imgmsg_to_cv2(
+            msg, desired_encoding=self.output_encoding
+        )
       out_msg = self.bridge.cv2_to_imgmsg(cv_img, encoding=self.output_encoding)
       out_msg.header = msg.header
       self.pub.publish(out_msg)

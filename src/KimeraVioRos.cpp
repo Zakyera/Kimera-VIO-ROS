@@ -6,6 +6,8 @@
 
 #include "kimera_vio_ros/KimeraVioRos.h"
 
+#include <cxxabi.h>
+
 #include <algorithm>
 #include <chrono>
 #include <cctype>
@@ -16,9 +18,14 @@
 #include <fstream>
 #include <iomanip>
 #include <limits>
+#include <map>
+#include <set>
 #include <sstream>
 #include <string>
 #include <ctime>
+#include <typeinfo>
+#include <unordered_map>
+#include <unordered_set>
 
 // Still need gflags for parameters in VIO
 #include <gflags/gflags.h>
@@ -33,6 +40,8 @@
 #include <std_srvs/Trigger.h>
 #include <std_srvs/TriggerRequest.h>
 #include <std_srvs/TriggerResponse.h>
+
+#include <gtsam/inference/Symbol.h>
 
 // Dependencies from VIO
 #include <kimera-vio/pipeline/MonoImuPipeline.h>
@@ -57,6 +66,41 @@ inline double elapsedSec(const TimerStart& start_time) {
 
 inline double secToMs(const double seconds) {
   return seconds * 1000.0;
+}
+
+std::vector<RerunLineStrip3D> makeArrowLineStrips(
+    const gtsam::Point3& origin,
+    const gtsam::Point3& endpoint,
+    const std::string& label) {
+  const Eigen::Vector3d direction = endpoint - origin;
+  const double length = direction.norm();
+  if (!std::isfinite(length) || length < 1e-9) {
+    return {};
+  }
+
+  const Eigen::Vector3d unit = direction / length;
+  Eigen::Vector3d lateral = unit.cross(Eigen::Vector3d::UnitZ());
+  if (lateral.norm() < 1e-6) {
+    lateral = unit.cross(Eigen::Vector3d::UnitY());
+  }
+  lateral.normalize();
+
+  const double head_length = std::min(0.25 * length, 0.08);
+  const double head_width = 0.55 * head_length;
+  const gtsam::Point3 head_base = endpoint - head_length * unit;
+  const gtsam::Point3 head_left = head_base + head_width * lateral;
+  const gtsam::Point3 head_right = head_base - head_width * lateral;
+
+  RerunLineStrip3D shaft;
+  shaft.label = label;
+  shaft.points = {origin, endpoint};
+  RerunLineStrip3D left;
+  left.label = label;
+  left.points = {head_left, endpoint};
+  RerunLineStrip3D right;
+  right.label = label;
+  right.points = {head_right, endpoint};
+  return {shaft, left, right};
 }
 
 gtsam::Matrix6 poseCovarianceFromMatrix(const gtsam::Matrix& state_covariance) {
@@ -140,6 +184,201 @@ Eigen::Matrix3d translationCovarianceFromPoseCovariance(
     covariance = pose_covariance.block<3, 3>(3, 3);
   }
   return covariance;
+}
+
+bool isUsableCovariance(const Eigen::Matrix3d& covariance) {
+  return covariance.allFinite() &&
+         covariance.norm() > std::numeric_limits<double>::epsilon();
+}
+
+template <typename VisualizerT>
+void drawFiniteScalar(VisualizerT* visualizer,
+                      const std::string& path,
+                      const double value) {
+  if (!visualizer || !std::isfinite(value)) {
+    return;
+  }
+  visualizer->drawScalar(path, value);
+}
+
+template <typename VisualizerT>
+void publishPosteriorCovarianceMetrics(VisualizerT* visualizer,
+                                       const std::string& source_name,
+                                       const Eigen::Matrix3d& covariance) {
+  if (!visualizer || !covariance.allFinite()) {
+    return;
+  }
+
+  const double trace_m2 = covariance.trace();
+  const double frobenius_m2 = covariance.norm();
+  const Eigen::Matrix3d symmetric_covariance =
+      0.5 * (covariance + covariance.transpose());
+  const Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> eig(
+      symmetric_covariance);
+
+  const std::string base_path = "metrics/posterior_covariance/" + source_name;
+  drawFiniteScalar(visualizer, base_path + "/uncertainty_frobenius_norm",
+                   frobenius_m2);
+  drawFiniteScalar(visualizer, base_path + "/translation_trace_m2", trace_m2);
+  drawFiniteScalar(visualizer, base_path + "/translation_trace_cm2",
+                   trace_m2 * 1.0e4);
+  drawFiniteScalar(visualizer, base_path + "/translation_frobenius_m2",
+                   frobenius_m2);
+  drawFiniteScalar(visualizer, base_path + "/translation_frobenius_cm2",
+                   frobenius_m2 * 1.0e4);
+
+  const double sigma_x_cm = std::sqrt(std::max(0.0, covariance(0, 0))) * 100.0;
+  const double sigma_y_cm = std::sqrt(std::max(0.0, covariance(1, 1))) * 100.0;
+  const double sigma_z_cm = std::sqrt(std::max(0.0, covariance(2, 2))) * 100.0;
+  drawFiniteScalar(visualizer, base_path + "/sigma_x_cm", sigma_x_cm);
+  drawFiniteScalar(visualizer, base_path + "/sigma_y_cm", sigma_y_cm);
+  drawFiniteScalar(visualizer, base_path + "/sigma_z_cm", sigma_z_cm);
+  drawFiniteScalar(visualizer, base_path + "/sigma_mean_cm",
+                   (sigma_x_cm + sigma_y_cm + sigma_z_cm) / 3.0);
+
+  if (eig.info() == Eigen::Success) {
+    const auto eigenvalues = eig.eigenvalues();
+    drawFiniteScalar(visualizer, base_path + "/sigma_min_cm",
+                     std::sqrt(std::max(0.0, eigenvalues.minCoeff())) * 100.0);
+    drawFiniteScalar(visualizer, base_path + "/sigma_max_cm",
+                     std::sqrt(std::max(0.0, eigenvalues.maxCoeff())) * 100.0);
+  }
+}
+
+enum class KimeraFactorGraphKind {
+  kSmartStereo,
+  kImu,
+  kBiasBetween,
+  kMarginal,
+  kPoseBetween,
+  kCbsPoseBetween,
+  kPrior,
+  kOther,
+};
+
+std::string demangledFactorTypeName(const std::type_info& type_info) {
+  int status = 0;
+  char* demangled =
+      abi::__cxa_demangle(type_info.name(), nullptr, nullptr, &status);
+  const std::string result =
+      status == 0 && demangled ? std::string(demangled) : type_info.name();
+  std::free(demangled);
+  return result;
+}
+
+KimeraFactorGraphKind classifyKimeraFactor(const std::string& type_name) {
+  if (type_name.find("SmartStereoProjection") != std::string::npos) {
+    return KimeraFactorGraphKind::kSmartStereo;
+  }
+  if (type_name.find("ImuFactor") != std::string::npos) {
+    return KimeraFactorGraphKind::kImu;
+  }
+  if (type_name.find("LinearContainerFactor") != std::string::npos) {
+    return KimeraFactorGraphKind::kMarginal;
+  }
+  if (type_name.find("BetweenFactor") != std::string::npos &&
+      type_name.find("imuBias") != std::string::npos) {
+    return KimeraFactorGraphKind::kBiasBetween;
+  }
+  if (type_name.find("BetweenFactor") != std::string::npos &&
+      type_name.find("Pose3") != std::string::npos) {
+    return KimeraFactorGraphKind::kPoseBetween;
+  }
+  if (type_name.find("PriorFactor") != std::string::npos) {
+    return KimeraFactorGraphKind::kPrior;
+  }
+  return KimeraFactorGraphKind::kOther;
+}
+
+const char* kimeraFactorKindLabel(const KimeraFactorGraphKind kind) {
+  switch (kind) {
+    case KimeraFactorGraphKind::kSmartStereo:
+      return "SmartStereo";
+    case KimeraFactorGraphKind::kImu:
+      return "IMU preintegration";
+    case KimeraFactorGraphKind::kBiasBetween:
+      return "IMU bias random walk";
+    case KimeraFactorGraphKind::kMarginal:
+      return "Marginal prior";
+    case KimeraFactorGraphKind::kPoseBetween:
+      return "Pose between";
+    case KimeraFactorGraphKind::kCbsPoseBetween:
+      return "CBS G2K pose between";
+    case KimeraFactorGraphKind::kPrior:
+      return "Prior";
+    case KimeraFactorGraphKind::kOther:
+      return "Other";
+  }
+  return "Other";
+}
+
+float kimeraFactorKindY(const KimeraFactorGraphKind kind) {
+  switch (kind) {
+    case KimeraFactorGraphKind::kSmartStereo:
+      return 3.0f;
+    case KimeraFactorGraphKind::kImu:
+      return -2.0f;
+    case KimeraFactorGraphKind::kBiasBetween:
+      return -6.0f;
+    case KimeraFactorGraphKind::kMarginal:
+      return 6.0f;
+    case KimeraFactorGraphKind::kPoseBetween:
+      return 1.5f;
+    case KimeraFactorGraphKind::kCbsPoseBetween:
+      return 2.2f;
+    case KimeraFactorGraphKind::kPrior:
+      return 7.5f;
+    case KimeraFactorGraphKind::kOther:
+      return 9.0f;
+  }
+  return 9.0f;
+}
+
+void setKimeraFactorNodeColor(const KimeraFactorGraphKind kind,
+                              RerunGraphNode* node) {
+  CHECK_NOTNULL(node);
+  switch (kind) {
+    case KimeraFactorGraphKind::kSmartStereo:
+      node->red = 46u;
+      node->green = 204u;
+      node->blue = 113u;
+      break;
+    case KimeraFactorGraphKind::kImu:
+      node->red = 231u;
+      node->green = 76u;
+      node->blue = 60u;
+      break;
+    case KimeraFactorGraphKind::kBiasBetween:
+      node->red = 241u;
+      node->green = 196u;
+      node->blue = 15u;
+      break;
+    case KimeraFactorGraphKind::kMarginal:
+      node->red = 155u;
+      node->green = 89u;
+      node->blue = 182u;
+      break;
+    case KimeraFactorGraphKind::kPoseBetween:
+      node->red = 232u;
+      node->green = 67u;
+      node->blue = 147u;
+      break;
+    case KimeraFactorGraphKind::kCbsPoseBetween:
+      node->red = 255u;
+      node->green = 65u;
+      node->blue = 180u;
+      break;
+    case KimeraFactorGraphKind::kPrior:
+      node->red = 189u;
+      node->green = 195u;
+      node->blue = 199u;
+      break;
+    case KimeraFactorGraphKind::kOther:
+      node->red = 127u;
+      node->green = 140u;
+      node->blue = 141u;
+      break;
+  }
 }
 
 std::string sanitizeCsvToken(std::string token) {
@@ -370,6 +609,22 @@ KimeraVioRos::KimeraVioRos()
   nh_private_.param("rerun_factor_graph_enable",
                     headless_rerun_factor_graph_enable_,
                     true);
+  nh_private_.param("rerun_factor_graph_inspector_enable",
+                    headless_rerun_factor_graph_inspector_enable_,
+                    false);
+  nh_private_.param("rerun_factor_graph_inspector_stride",
+                    headless_rerun_factor_graph_inspector_stride_,
+                    5);
+  headless_rerun_factor_graph_inspector_stride_ =
+      std::max(1, headless_rerun_factor_graph_inspector_stride_);
+  nh_private_.param("rerun_factor_graph_inspector_include_smart_factors",
+                    headless_rerun_factor_graph_inspector_include_smart_factors_,
+                    false);
+  nh_private_.param("rerun_factor_graph_inspector_max_smart_factors",
+                    headless_rerun_factor_graph_inspector_max_smart_factors_,
+                    1000);
+  headless_rerun_factor_graph_inspector_max_smart_factors_ =
+      std::max(0, headless_rerun_factor_graph_inspector_max_smart_factors_);
   nh_private_.param<std::string>(
       "rerun_recording_id", headless_rerun_recording_id_, "");
   nh_private_.param<std::string>("rerun_host", headless_rerun_host_, "auto");
@@ -800,7 +1055,8 @@ void KimeraVioRos::initializeHeadlessLandmarksPublisher() {
 
 void KimeraVioRos::initializeHeadlessRerunVisualizer() {
   if (!headless_rerun_visualizer_enable_ &&
-      !headless_rerun_scalar_metrics_enable_) {
+      !headless_rerun_scalar_metrics_enable_ &&
+      !headless_rerun_factor_graph_inspector_enable_) {
     LOG(INFO) << "Kimera headless Rerun visualizer disabled.";
     return;
   }
@@ -812,7 +1068,17 @@ void KimeraVioRos::initializeHeadlessRerunVisualizer() {
             << headless_rerun_host_ << "', scalar_metrics="
             << (headless_rerun_scalar_metrics_enable_ ? "true" : "false")
             << ", geometry="
-            << (headless_rerun_geometry_enable_ ? "true" : "false") << ".";
+            << (headless_rerun_geometry_enable_ ? "true" : "false")
+            << ", factor_graph_inspector="
+            << (headless_rerun_factor_graph_inspector_enable_ ? "true"
+                                                               : "false")
+            << ", factor_graph_inspector_stride="
+            << headless_rerun_factor_graph_inspector_stride_
+            << ", include_smart_factors="
+            << (headless_rerun_factor_graph_inspector_include_smart_factors_
+                    ? "true"
+                    : "false")
+            << ".";
 }
 
 void KimeraVioRos::publishHeadlessBackendOutput(
@@ -1020,11 +1286,26 @@ void KimeraVioRos::publishHeadlessRerunBackendOutput(
     }
 
     if (draw_scalars) {
+      const Eigen::Matrix3d current_pose_covariance =
+          translationCovarianceFromPoseCovariance(
+              output->state_covariance_lkf_);
+      publishPosteriorCovarianceMetrics(headless_rerun_visualizer_.get(),
+                                        "kimera",
+                                        current_pose_covariance);
       headless_rerun_visualizer_->drawScalar("kimera/keyframe_id",
                                              output->cur_kf_id_);
       headless_rerun_visualizer_->drawScalar(
           "kimera/timing/optimization_ms",
           output->optimization_time_sec_ * 1000.0);
+      headless_rerun_visualizer_->drawScalar(
+          "kimera/timing/optimize_total_ms",
+          output->optimize_total_time_sec_ * 1000.0);
+      headless_rerun_visualizer_->drawScalar(
+          "kimera/timing/smoother_update_ms",
+          output->optimization_time_sec_ * 1000.0);
+      headless_rerun_visualizer_->drawScalar(
+          "kimera/timing/compute_state_covariance_ms",
+          output->compute_state_covariance_time_sec_ * 1000.0);
 
       if (headless_cbs_belief_bridge_enable_) {
         headless_rerun_visualizer_->drawScalar(
@@ -1059,6 +1340,18 @@ void KimeraVioRos::publishHeadlessRerunBackendOutput(
             "kimera/cbs/timing/belief_generation_ms",
             output->cbs_belief_generation_time_sec_ * 1000.0);
         headless_rerun_visualizer_->drawScalar(
+            "kimera/cbs/timing/collect_external_beliefs_ms",
+            output->collect_external_beliefs_time_sec_ * 1000.0);
+        headless_rerun_visualizer_->drawScalar(
+            "kimera/cbs/timing/outgoing_total_ms",
+            output->cbs_outgoing_total_time_sec_ * 1000.0);
+        headless_rerun_visualizer_->drawScalar(
+            "kimera/cbs/timing/set_marginalization_graph_ms",
+            output->cbs_set_marginalization_graph_time_sec_ * 1000.0);
+        headless_rerun_visualizer_->drawScalar(
+            "kimera/cbs/timing/get_odometry_beliefs_ms",
+            output->cbs_get_odometry_beliefs_time_sec_ * 1000.0);
+        headless_rerun_visualizer_->drawScalar(
             "kimera/cbs/marginalization_graph/factor_count",
             output->cbs_marginalization_graph_factor_count_);
       }
@@ -1066,12 +1359,17 @@ void KimeraVioRos::publishHeadlessRerunBackendOutput(
     current_pose_time_sec = elapsedSec(current_pose_start_time);
 
     const auto trajectory_start_time = VIO::utils::Timer::tic();
-    if (draw_geometry) {
+    if (draw_geometry || headless_rerun_factor_graph_inspector_enable_) {
       const int64_t current_kf_id = static_cast<int64_t>(output->cur_kf_id_);
+      if (current_kf_id < headless_rerun_last_kf_id_) {
+        headless_rerun_trajectory_.clear();
+      }
       if (current_kf_id != headless_rerun_last_kf_id_) {
         headless_rerun_trajectory_.push_back(pose);
         headless_rerun_last_kf_id_ = current_kf_id;
       }
+    }
+    if (draw_geometry) {
       if (headless_rerun_trajectory_.size() > 1u) {
         headless_rerun_visualizer_->drawTrajectory(
             "kimera/trajectory",
@@ -1111,6 +1409,9 @@ void KimeraVioRos::publishHeadlessRerunBackendOutput(
       headless_rerun_visualizer_->drawScalar(
           "kimera/factor_graph/factors_total", output->factor_graph_.size());
     }
+    if (headless_rerun_factor_graph_inspector_enable_) {
+      publishKimeraFactorGraphInspector(output);
+    }
     factor_graph_time_sec = elapsedSec(factor_graph_start_time);
     LOG(INFO) << "KIMERA_RERUN_CALLBACK_TIMING_ROW,"
               << output->cur_kf_id_ << ","
@@ -1121,12 +1422,751 @@ void KimeraVioRos::publishHeadlessRerunBackendOutput(
               << secToMs(factor_graph_time_sec) << ","
               << output->landmarks_with_id_map_.size() << ","
               << output->factor_graph_.size() << ","
-              << (headless_rerun_factor_graph_enable_ ? 1 : 0);
+              << (headless_rerun_factor_graph_enable_ ? 1 : 0) << ","
+              << (headless_rerun_factor_graph_inspector_enable_ ? 1 : 0);
   } catch (const std::exception& e) {
     LOG(WARNING) << "Kimera headless Rerun publish skipped: " << e.what();
   } catch (...) {
     LOG(WARNING) << "Kimera headless Rerun publish skipped.";
   }
+}
+
+void KimeraVioRos::publishKimeraFactorGraphInspector(
+    const BackendOutput::ConstPtr& output) {
+  CHECK(output);
+  CHECK(headless_rerun_visualizer_);
+  const FrameId stride = static_cast<FrameId>(
+      std::max(1, headless_rerun_factor_graph_inspector_stride_));
+  if (output->cur_kf_id_ % stride != 0u) {
+    return;
+  }
+
+  const auto& graph = output->factor_graph_;
+  const auto& state = output->state_;
+  std::map<uint64_t, std::pair<gtsam::Key, gtsam::Pose3>> active_poses;
+  for (const auto& key_value : state) {
+    const gtsam::Symbol symbol(key_value.key);
+    if (symbol.chr() != kPoseSymbolChar) {
+      continue;
+    }
+    active_poses.emplace(
+        symbol.index(),
+        std::make_pair(key_value.key,
+                       state.at<gtsam::Pose3>(key_value.key)));
+  }
+
+  uint64_t minimum_key_index = std::numeric_limits<uint64_t>::max();
+  for (const auto& key_value : state) {
+    const gtsam::Symbol symbol(key_value.key);
+    if (symbol.chr() == kPoseSymbolChar) {
+      minimum_key_index = std::min(minimum_key_index, symbol.index());
+    }
+  }
+  if (minimum_key_index == std::numeric_limits<uint64_t>::max()) {
+    for (const auto& key_value : state) {
+      minimum_key_index = std::min(
+          minimum_key_index, gtsam::Symbol(key_value.key).index());
+    }
+  }
+  if (minimum_key_index == std::numeric_limits<uint64_t>::max()) {
+    minimum_key_index = 0u;
+  }
+
+  std::vector<RerunGraphNode> nodes;
+  std::vector<std::pair<std::string, std::string>> edges;
+  std::unordered_map<gtsam::Key, std::string> variable_node_ids;
+  std::unordered_map<gtsam::Key, float> variable_x_positions;
+  nodes.reserve(state.size() + 128u);
+  variable_node_ids.reserve(state.size() + 16u);
+  variable_x_positions.reserve(state.size() + 16u);
+
+  size_t state_pose_count = 0u;
+  size_t state_velocity_count = 0u;
+  size_t state_bias_count = 0u;
+  size_t state_other_count = 0u;
+
+  const auto add_variable_node =
+      [&](const gtsam::Key key, const bool missing) -> std::string {
+    const auto existing = variable_node_ids.find(key);
+    if (existing != variable_node_ids.end()) {
+      return existing->second;
+    }
+
+    const gtsam::Symbol symbol(key);
+    const std::string formatted_key = gtsam::DefaultKeyFormatter(key);
+    RerunGraphNode node;
+    node.id = "variable:" + formatted_key;
+    node.label = formatted_key;
+    node.x = static_cast<float>(
+        static_cast<double>(symbol.index()) -
+        static_cast<double>(minimum_key_index));
+    node.radius_ui_points = missing ? 10.0f : 8.0f;
+    node.show_label = true;
+
+    if (missing) {
+      node.label += " (missing value)";
+      node.y = 10.5f;
+      node.red = 255u;
+      node.green = 35u;
+      node.blue = 35u;
+    } else {
+      switch (symbol.chr()) {
+        case kPoseSymbolChar:
+          node.label += " pose";
+          node.y = 0.0f;
+          node.red = 65u;
+          node.green = 105u;
+          node.blue = 225u;
+          ++state_pose_count;
+          break;
+        case kVelocitySymbolChar:
+          node.label += " velocity";
+          node.y = -4.0f;
+          node.red = 38u;
+          node.green = 198u;
+          node.blue = 218u;
+          ++state_velocity_count;
+          break;
+        case kImuBiasSymbolChar:
+          node.label += " IMU bias";
+          node.y = -8.0f;
+          node.red = 230u;
+          node.green = 126u;
+          node.blue = 34u;
+          ++state_bias_count;
+          break;
+        default:
+          node.label += " state";
+          node.y = 10.5f;
+          node.red = 149u;
+          node.green = 165u;
+          node.blue = 166u;
+          ++state_other_count;
+          break;
+      }
+    }
+
+    variable_node_ids.emplace(key, node.id);
+    variable_x_positions.emplace(key, node.x);
+    nodes.push_back(node);
+    return node.id;
+  };
+
+  for (const auto& key_value : state) {
+    add_variable_node(key_value.key, false);
+  }
+
+  size_t live_factor_count = 0u;
+  size_t missing_key_reference_count = 0u;
+  std::set<gtsam::Key> unique_missing_keys;
+  std::map<KimeraFactorGraphKind, size_t> factor_counts;
+  size_t smart_factors_visualized = 0u;
+  size_t smart_factors_aggregated = 0u;
+  std::set<gtsam::Key> aggregated_smart_keys;
+  std::map<KimeraFactorGraphKind, std::vector<RerunLineStrip3D>>
+      spatial_factor_edges;
+  std::map<KimeraFactorGraphKind, std::vector<gtsam::Point3>>
+      spatial_factor_markers;
+  std::map<KimeraFactorGraphKind, std::vector<std::string>>
+      spatial_factor_marker_labels;
+  std::unordered_set<const gtsam::NonlinearFactor*> active_cbs_factor_ptrs;
+  std::unordered_set<const gtsam::NonlinearFactor*> rendered_cbs_factor_ptrs;
+  for (const auto& factor : output->cbs_active_odom_factors_) {
+    if (factor) {
+      active_cbs_factor_ptrs.insert(factor.get());
+    }
+  }
+
+  const auto add_spatial_factor =
+      [&](const KimeraFactorGraphKind kind,
+          const gtsam::KeyVector& keys,
+          const std::string& label) {
+        std::map<uint64_t, gtsam::Point3> endpoint_positions;
+        for (const auto& key : keys) {
+          const gtsam::Symbol symbol(key);
+          if (symbol.chr() == kPoseSymbolChar) {
+            const auto pose_it = active_poses.find(symbol.index());
+            if (pose_it != active_poses.end()) {
+              endpoint_positions.emplace(
+                  symbol.index(), pose_it->second.second.translation());
+            }
+          } else if (kind == KimeraFactorGraphKind::kBiasBetween &&
+                     symbol.chr() == kImuBiasSymbolChar) {
+            const auto pose_it = active_poses.find(symbol.index());
+            if (pose_it != active_poses.end()) {
+              endpoint_positions.emplace(
+                  symbol.index(), pose_it->second.second.translation());
+            }
+          }
+        }
+
+        if (endpoint_positions.empty()) {
+          return;
+        }
+
+        if (kind == KimeraFactorGraphKind::kMarginal) {
+          gtsam::Point3 centroid = gtsam::Point3::Zero();
+          for (const auto& index_position : endpoint_positions) {
+            centroid += index_position.second;
+          }
+          centroid /= static_cast<double>(endpoint_positions.size());
+          centroid.z() += 0.4;
+          spatial_factor_markers[kind].push_back(centroid);
+          spatial_factor_marker_labels[kind].push_back(label);
+
+          RerunLineStrip3D strip;
+          strip.label = label;
+          strip.points.reserve(endpoint_positions.size());
+          for (const auto& index_position : endpoint_positions) {
+            gtsam::Point3 endpoint = index_position.second;
+            endpoint.z() += 0.4;
+            strip.points.push_back(endpoint);
+          }
+          if (strip.points.size() > 1u) {
+            spatial_factor_edges[kind].push_back(std::move(strip));
+          }
+          return;
+        }
+
+        if (endpoint_positions.size() == 1u) {
+          spatial_factor_markers[kind].push_back(
+              endpoint_positions.begin()->second);
+          spatial_factor_marker_labels[kind].push_back(label);
+          return;
+        }
+
+        std::vector<gtsam::Point3> endpoints;
+        endpoints.reserve(endpoint_positions.size());
+        for (const auto& index_position : endpoint_positions) {
+          endpoints.push_back(index_position.second);
+        }
+
+        RerunLineStrip3D strip;
+        strip.label = label;
+        if (endpoints.size() == 2u) {
+          const gtsam::Point3& from = endpoints.front();
+          const gtsam::Point3& to = endpoints.back();
+          const Eigen::Vector3d segment = to - from;
+          const double segment_length = segment.norm();
+          Eigen::Vector3d lateral = segment.cross(Eigen::Vector3d::UnitZ());
+          if (lateral.norm() < 1e-6) {
+            lateral = segment.cross(Eigen::Vector3d::UnitY());
+          }
+          if (lateral.norm() < 1e-6) {
+            lateral = Eigen::Vector3d::UnitX();
+          } else {
+            lateral.normalize();
+          }
+
+          const double base_offset =
+              std::clamp(0.45 * segment_length, 0.08, 0.25);
+          double lateral_scale = 0.0;
+          double vertical_offset = 0.0;
+          switch (kind) {
+            case KimeraFactorGraphKind::kImu:
+              lateral_scale = base_offset;
+              vertical_offset = 0.03;
+              break;
+            case KimeraFactorGraphKind::kBiasBetween:
+              lateral_scale = -base_offset;
+              vertical_offset = -0.03;
+              break;
+            case KimeraFactorGraphKind::kPoseBetween:
+              lateral_scale = 1.4 * base_offset;
+              vertical_offset = 0.12;
+              break;
+            case KimeraFactorGraphKind::kCbsPoseBetween:
+              lateral_scale = 1.8 * base_offset;
+              vertical_offset = 0.18;
+              break;
+            case KimeraFactorGraphKind::kSmartStereo:
+              lateral_scale = 0.6 * base_offset;
+              vertical_offset = 0.08;
+              break;
+            case KimeraFactorGraphKind::kOther:
+              lateral_scale = -0.6 * base_offset;
+              vertical_offset = 0.08;
+              break;
+            case KimeraFactorGraphKind::kMarginal:
+            case KimeraFactorGraphKind::kPrior:
+              break;
+          }
+          gtsam::Point3 midpoint = 0.5 * (from + to);
+          midpoint += lateral_scale * lateral;
+          midpoint.z() += vertical_offset;
+          strip.points = {from, midpoint, to};
+          spatial_factor_markers[kind].push_back(midpoint);
+          spatial_factor_marker_labels[kind].push_back(label);
+        } else {
+          strip.points = std::move(endpoints);
+        }
+        spatial_factor_edges[kind].push_back(std::move(strip));
+      };
+
+  const auto add_factor_node =
+      [&](const std::string& id,
+          const std::string& label,
+          const KimeraFactorGraphKind kind,
+          const gtsam::KeyVector& keys,
+          const bool show_label = false) {
+    RerunGraphNode node;
+    node.id = id;
+    node.label = label;
+    node.y = kimeraFactorKindY(kind);
+    node.radius_ui_points = kind == KimeraFactorGraphKind::kMarginal
+                                ? 8.0f
+                                : 6.0f;
+    node.show_label = show_label;
+    setKimeraFactorNodeColor(kind, &node);
+
+    double factor_x_sum = 0.0;
+    size_t connected_key_count = 0u;
+    for (const auto& key : keys) {
+      const bool missing = !state.exists(key);
+      const std::string variable_id = add_variable_node(key, missing);
+      factor_x_sum += variable_x_positions.at(key);
+      ++connected_key_count;
+      edges.emplace_back(node.id, variable_id);
+    }
+    if (connected_key_count > 0u) {
+      node.x = static_cast<float>(
+          factor_x_sum / static_cast<double>(connected_key_count));
+    }
+    nodes.push_back(node);
+  };
+
+  for (size_t slot = 0u; slot < graph.size(); ++slot) {
+    if (!graph.exists(slot)) {
+      continue;
+    }
+    const auto& factor = graph.at(slot);
+    if (!factor) {
+      continue;
+    }
+    ++live_factor_count;
+
+    const std::string type_name = demangledFactorTypeName(typeid(*factor));
+    const bool is_active_cbs_factor =
+        active_cbs_factor_ptrs.count(factor.get()) > 0u;
+    const KimeraFactorGraphKind kind =
+        is_active_cbs_factor ? KimeraFactorGraphKind::kCbsPoseBetween
+                             : classifyKimeraFactor(type_name);
+    if (is_active_cbs_factor) {
+      rendered_cbs_factor_ptrs.insert(factor.get());
+    }
+    ++factor_counts[kind];
+    const gtsam::KeyVector& keys = factor->keys();
+    for (const auto& key : keys) {
+      if (!state.exists(key)) {
+        ++missing_key_reference_count;
+        unique_missing_keys.insert(key);
+      }
+    }
+
+    std::ostringstream label;
+    label << kimeraFactorKindLabel(kind) << " slot " << slot << " | ";
+    for (size_t key_index = 0u; key_index < keys.size(); ++key_index) {
+      if (key_index > 0u) {
+        label << ",";
+      }
+      label << gtsam::DefaultKeyFormatter(keys[key_index]);
+    }
+    if (kind == KimeraFactorGraphKind::kOther) {
+      label << " | " << type_name;
+    }
+
+    if (kind == KimeraFactorGraphKind::kSmartStereo) {
+      const bool draw_individually =
+          headless_rerun_factor_graph_inspector_include_smart_factors_ &&
+          smart_factors_visualized < static_cast<size_t>(
+              headless_rerun_factor_graph_inspector_max_smart_factors_);
+      if (!draw_individually) {
+        ++smart_factors_aggregated;
+        aggregated_smart_keys.insert(keys.begin(), keys.end());
+        continue;
+      }
+      ++smart_factors_visualized;
+    }
+
+    add_spatial_factor(kind, keys, label.str());
+    add_factor_node("factor:" + std::to_string(slot),
+                    label.str(),
+                    kind,
+                    keys);
+  }
+
+  size_t external_factor_index = 0u;
+  for (const auto& factor : output->cbs_active_odom_factors_) {
+    if (!factor || rendered_cbs_factor_ptrs.count(factor.get()) > 0u) {
+      ++external_factor_index;
+      continue;
+    }
+    const gtsam::KeyVector& keys = factor->keys();
+    std::ostringstream label;
+    label << kimeraFactorKindLabel(KimeraFactorGraphKind::kCbsPoseBetween)
+          << " | ";
+    for (size_t key_index = 0u; key_index < keys.size(); ++key_index) {
+      if (key_index > 0u) {
+        label << ",";
+      }
+      label << gtsam::DefaultKeyFormatter(keys[key_index]);
+    }
+    ++factor_counts[KimeraFactorGraphKind::kCbsPoseBetween];
+    add_spatial_factor(
+        KimeraFactorGraphKind::kCbsPoseBetween, keys, label.str());
+    add_factor_node("external_factor:" + std::to_string(external_factor_index),
+                    label.str(),
+                    KimeraFactorGraphKind::kCbsPoseBetween,
+                    keys);
+    ++external_factor_index;
+  }
+
+  if (smart_factors_aggregated > 0u) {
+    gtsam::KeyVector smart_keys(aggregated_smart_keys.begin(),
+                               aggregated_smart_keys.end());
+    std::ostringstream label;
+    label << smart_factors_aggregated << " SmartStereo tracks";
+    add_factor_node("factor:smart_stereo_aggregate",
+                    label.str(),
+                    KimeraFactorGraphKind::kSmartStereo,
+                    smart_keys,
+                    true);
+  }
+
+  headless_rerun_visualizer_->drawGraph(
+      "kimera/factor_graph_inspector/topology", nodes, edges, false);
+
+  const std::string spatial_path =
+      "kimera/factor_graph_inspector/spatial/";
+  if (headless_rerun_trajectory_.size() > 1u) {
+    const size_t context_pose_limit =
+        std::max<size_t>(2u, 2u * active_poses.size());
+    const auto context_begin = headless_rerun_trajectory_.begin() +
+        static_cast<std::ptrdiff_t>(
+            headless_rerun_trajectory_.size() > context_pose_limit
+                ? headless_rerun_trajectory_.size() - context_pose_limit
+                : 0u);
+    const std::vector<gtsam::Pose3> context_trajectory(
+        context_begin, headless_rerun_trajectory_.end());
+    headless_rerun_visualizer_->drawTrajectory(
+        spatial_path + "context/trajectory_history",
+        context_trajectory,
+        Eigen::Vector4f(170.f, 176.f, 186.f, 150.f),
+        2.0f);
+  }
+  std::vector<gtsam::Point3> active_pose_points;
+  std::vector<std::string> active_pose_labels;
+  RerunLineStrip3D active_pose_chain;
+  active_pose_chain.label = "Active Kimera pose chain";
+  active_pose_points.reserve(active_poses.size());
+  active_pose_labels.reserve(active_poses.size());
+  active_pose_chain.points.reserve(active_poses.size());
+  for (const auto& index_pose : active_poses) {
+    const gtsam::Point3 position = index_pose.second.second.translation();
+    active_pose_points.push_back(position);
+    active_pose_chain.points.push_back(position);
+    active_pose_labels.push_back(
+        gtsam::DefaultKeyFormatter(index_pose.second.first));
+  }
+  headless_rerun_visualizer_->drawLabeledPoints(
+      spatial_path + "states/active_poses",
+      active_pose_points,
+      active_pose_labels,
+      Eigen::Vector4f(65.f, 105.f, 225.f, 255.f),
+      6.0f,
+      false);
+  headless_rerun_visualizer_->drawLineStrips(
+      spatial_path + "states/active_pose_chain",
+      active_pose_chain.points.size() > 1u
+          ? std::vector<RerunLineStrip3D>{active_pose_chain}
+          : std::vector<RerunLineStrip3D>{},
+      Eigen::Vector4f(110.f, 150.f, 255.f, 150.f),
+      1.5f,
+      false);
+  if (!active_poses.empty()) {
+    const auto& latest_pose = active_poses.rbegin()->second;
+    headless_rerun_visualizer_->drawLabeledPoints(
+        spatial_path + "states/latest_pose",
+        {latest_pose.second.translation()},
+        {gtsam::DefaultKeyFormatter(latest_pose.first) + " latest"},
+        Eigen::Vector4f(255.f, 255.f, 255.f, 255.f),
+        9.0f,
+        true);
+    headless_rerun_visualizer_->drawTf(
+        spatial_path + "states/latest_pose_frame", latest_pose.second, 0.2f);
+  }
+
+  const std::string merge_path = spatial_path + "cbs_merge/";
+  const auto clear_merge_visualization = [&]() {
+    headless_rerun_visualizer_->drawLineStrips(
+        merge_path + "arrows/local_before",
+        {},
+        Eigen::Vector4f::Zero(),
+        1.0f,
+        false);
+    headless_rerun_visualizer_->drawLineStrips(
+        merge_path + "arrows/external_g2k",
+        {},
+        Eigen::Vector4f::Zero(),
+        1.0f,
+        false);
+    headless_rerun_visualizer_->drawLineStrips(
+        merge_path + "arrows/final_after",
+        {},
+        Eigen::Vector4f::Zero(),
+        1.0f,
+        false);
+    headless_rerun_visualizer_->drawLabeledPoints(
+        merge_path + "endpoints/local_before",
+        {},
+        {},
+        Eigen::Vector4f::Zero(),
+        1.0f,
+        false);
+    headless_rerun_visualizer_->drawLabeledPoints(
+        merge_path + "endpoints/external_g2k",
+        {},
+        {},
+        Eigen::Vector4f::Zero(),
+        1.0f,
+        false);
+    headless_rerun_visualizer_->drawLabeledPoints(
+        merge_path + "endpoints/final_after",
+        {},
+        {},
+        Eigen::Vector4f::Zero(),
+        1.0f,
+        false);
+    headless_rerun_visualizer_->drawLabeledPoints(
+        merge_path + "origin", {}, {}, Eigen::Vector4f::Zero(), 1.0f, false);
+    headless_rerun_visualizer_->clearEntity(
+        merge_path + "frames/local_before");
+    headless_rerun_visualizer_->clearEntity(
+        merge_path + "frames/external_g2k");
+    headless_rerun_visualizer_->clearEntity(
+        merge_path + "frames/final_after");
+  };
+
+  const auto& merge = output->cbs_pose_merge_diagnostic_;
+  if (merge.valid && state.exists(merge.from_pose_key) &&
+      state.exists(merge.to_pose_key)) {
+    const gtsam::Pose3 anchor =
+        state.at<gtsam::Pose3>(merge.from_pose_key);
+    const gtsam::Pose3 local_pose =
+        anchor.compose(merge.local_relative_before);
+    const gtsam::Pose3 external_pose =
+        anchor.compose(merge.external_relative);
+    const gtsam::Pose3 final_pose =
+        anchor.compose(merge.final_relative_after);
+    const gtsam::Point3 origin = anchor.translation();
+    const std::string edge_label =
+        gtsam::DefaultKeyFormatter(merge.from_pose_key) + "->" +
+        gtsam::DefaultKeyFormatter(merge.to_pose_key);
+
+    const Eigen::Vector4f local_color(255.f, 156.f, 45.f, 255.f);
+    const Eigen::Vector4f external_color(255.f, 65.f, 180.f, 255.f);
+    const Eigen::Vector4f final_color(55.f, 220.f, 125.f, 255.f);
+    headless_rerun_visualizer_->drawLineStrips(
+        merge_path + "arrows/local_before",
+        makeArrowLineStrips(
+            origin, local_pose.translation(), "Kimera local before " + edge_label),
+        local_color,
+        6.0f,
+        false);
+    headless_rerun_visualizer_->drawLineStrips(
+        merge_path + "arrows/external_g2k",
+        makeArrowLineStrips(origin,
+                            external_pose.translation(),
+                            "External G2K " + edge_label),
+        external_color,
+        6.0f,
+        false);
+    headless_rerun_visualizer_->drawLineStrips(
+        merge_path + "arrows/final_after",
+        makeArrowLineStrips(
+            origin, final_pose.translation(), "Final optimized " + edge_label),
+        final_color,
+        6.0f,
+        false);
+
+    headless_rerun_visualizer_->drawLabeledPoints(
+        merge_path + "origin",
+        {origin},
+        {"Merge origin " + gtsam::DefaultKeyFormatter(merge.from_pose_key)},
+        Eigen::Vector4f(255.f, 255.f, 255.f, 255.f),
+        8.0f,
+        true);
+    headless_rerun_visualizer_->drawLabeledPoints(
+        merge_path + "endpoints/local_before",
+        {local_pose.translation()},
+        {"Kimera local before " + edge_label},
+        local_color,
+        9.0f,
+        true);
+    headless_rerun_visualizer_->drawLabeledPoints(
+        merge_path + "endpoints/external_g2k",
+        {external_pose.translation()},
+        {"External G2K " + edge_label},
+        external_color,
+        9.0f,
+        true);
+    headless_rerun_visualizer_->drawLabeledPoints(
+        merge_path + "endpoints/final_after",
+        {final_pose.translation()},
+        {"Final optimized " + edge_label},
+        final_color,
+        9.0f,
+        true);
+    headless_rerun_visualizer_->drawTf(
+        merge_path + "frames/local_before", local_pose, 0.12f);
+    headless_rerun_visualizer_->drawTf(
+        merge_path + "frames/external_g2k", external_pose, 0.12f);
+    headless_rerun_visualizer_->drawTf(
+        merge_path + "frames/final_after", final_pose, 0.12f);
+  } else {
+    clear_merge_visualization();
+  }
+
+  const auto draw_spatial_factor_kind =
+      [&](const KimeraFactorGraphKind kind,
+          const std::string& name,
+          const Eigen::Vector4f& color,
+          const float line_width,
+          const float marker_radius,
+          const bool show_marker_labels) {
+        headless_rerun_visualizer_->drawLineStrips(
+            spatial_path + "factors/" + name,
+            spatial_factor_edges[kind],
+            color,
+            line_width,
+            false);
+        headless_rerun_visualizer_->drawLabeledPoints(
+            spatial_path + "factor_markers/" + name,
+            spatial_factor_markers[kind],
+            spatial_factor_marker_labels[kind],
+            color,
+            marker_radius,
+            show_marker_labels);
+      };
+  draw_spatial_factor_kind(KimeraFactorGraphKind::kImu,
+                           "imu_preintegration",
+                           Eigen::Vector4f(245.f, 65.f, 55.f, 255.f),
+                           4.0f,
+                           7.0f,
+                           false);
+  draw_spatial_factor_kind(KimeraFactorGraphKind::kBiasBetween,
+                           "bias_random_walk",
+                           Eigen::Vector4f(255.f, 205.f, 20.f, 255.f),
+                           3.0f,
+                           6.0f,
+                           false);
+  draw_spatial_factor_kind(KimeraFactorGraphKind::kPoseBetween,
+                           "pose_between",
+                           Eigen::Vector4f(0.f, 220.f, 255.f, 255.f),
+                           4.0f,
+                           7.0f,
+                           true);
+  draw_spatial_factor_kind(KimeraFactorGraphKind::kCbsPoseBetween,
+                           "cbs_g2k_pose_between",
+                           Eigen::Vector4f(255.f, 65.f, 180.f, 255.f),
+                           5.0f,
+                           8.0f,
+                           true);
+  draw_spatial_factor_kind(KimeraFactorGraphKind::kMarginal,
+                           "marginal_prior",
+                           Eigen::Vector4f(155.f, 89.f, 182.f, 150.f),
+                           1.5f,
+                           8.0f,
+                           false);
+  draw_spatial_factor_kind(KimeraFactorGraphKind::kPrior,
+                           "priors",
+                           Eigen::Vector4f(210.f, 215.f, 220.f, 240.f),
+                           2.0f,
+                           7.0f,
+                           true);
+  draw_spatial_factor_kind(KimeraFactorGraphKind::kSmartStereo,
+                           "smart_stereo_sample",
+                           Eigen::Vector4f(46.f, 204.f, 113.f, 100.f),
+                           1.0f,
+                           4.0f,
+                           false);
+  draw_spatial_factor_kind(KimeraFactorGraphKind::kOther,
+                           "other",
+                           Eigen::Vector4f(127.f, 140.f, 141.f, 180.f),
+                           1.5f,
+                           5.0f,
+                           false);
+
+  const std::string counts_path = "kimera/factor_graph_inspector/counts/";
+  const auto draw_count = [&](const std::string& name, const size_t value) {
+    headless_rerun_visualizer_->drawScalar(counts_path + name,
+                                           static_cast<double>(value));
+  };
+  draw_count("raw_factor_slots", graph.size());
+  draw_count("live_factors", live_factor_count);
+  draw_count("tombstone_slots",
+             graph.size() >= live_factor_count
+                 ? graph.size() - live_factor_count
+                 : 0u);
+  draw_count("state_values", state.size());
+  draw_count("active_pose_keys", state_pose_count);
+  draw_count("active_velocity_keys", state_velocity_count);
+  draw_count("active_bias_keys", state_bias_count);
+  draw_count("active_other_keys", state_other_count);
+  draw_count("smart_stereo_factors",
+             factor_counts[KimeraFactorGraphKind::kSmartStereo]);
+  draw_count("imu_factors", factor_counts[KimeraFactorGraphKind::kImu]);
+  draw_count("bias_between_factors",
+             factor_counts[KimeraFactorGraphKind::kBiasBetween]);
+  draw_count("marginal_factors",
+             factor_counts[KimeraFactorGraphKind::kMarginal]);
+  draw_count("pose_between_factors",
+             factor_counts[KimeraFactorGraphKind::kPoseBetween]);
+  draw_count("cbs_g2k_pose_between_factors",
+             factor_counts[KimeraFactorGraphKind::kCbsPoseBetween]);
+  draw_count("prior_factors", factor_counts[KimeraFactorGraphKind::kPrior]);
+  draw_count("other_factors", factor_counts[KimeraFactorGraphKind::kOther]);
+  draw_count("smart_factors_visualized", smart_factors_visualized);
+  draw_count("smart_factors_aggregated", smart_factors_aggregated);
+  draw_count("missing_key_references", missing_key_reference_count);
+  draw_count("unique_missing_keys", unique_missing_keys.size());
+  draw_count("visualized_nodes", nodes.size());
+  draw_count("visualized_edges", edges.size());
+  draw_count("spatial_pose_nodes", active_pose_points.size());
+  draw_count("trajectory_history_poses", headless_rerun_trajectory_.size());
+  draw_count("spatial_imu_edges",
+             spatial_factor_edges[KimeraFactorGraphKind::kImu].size());
+  draw_count(
+      "spatial_bias_edges",
+      spatial_factor_edges[KimeraFactorGraphKind::kBiasBetween].size());
+  draw_count(
+      "spatial_pose_between_edges",
+      spatial_factor_edges[KimeraFactorGraphKind::kPoseBetween].size());
+  draw_count(
+      "spatial_cbs_g2k_pose_between_edges",
+      spatial_factor_edges[KimeraFactorGraphKind::kCbsPoseBetween].size());
+  draw_count(
+      "spatial_marginal_edges",
+      spatial_factor_edges[KimeraFactorGraphKind::kMarginal].size());
+
+  LOG(INFO) << "KIMERA_RERUN_FACTOR_GRAPH_INSPECTOR_ROW,"
+            << output->cur_kf_id_ << ","
+            << graph.size() << ","
+            << live_factor_count << ","
+            << state_pose_count << ","
+            << state_velocity_count << ","
+            << state_bias_count << ","
+            << factor_counts[KimeraFactorGraphKind::kSmartStereo] << ","
+            << factor_counts[KimeraFactorGraphKind::kImu] << ","
+            << factor_counts[KimeraFactorGraphKind::kBiasBetween] << ","
+            << factor_counts[KimeraFactorGraphKind::kMarginal] << ","
+            << factor_counts[KimeraFactorGraphKind::kPoseBetween] << ","
+            << factor_counts[KimeraFactorGraphKind::kCbsPoseBetween] << ","
+            << smart_factors_visualized << ","
+            << smart_factors_aggregated << ","
+            << missing_key_reference_count << ","
+            << nodes.size() << ","
+            << edges.size();
 }
 
 void KimeraVioRos::publishHeadlessOdometryBelief(

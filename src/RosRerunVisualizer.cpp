@@ -1,8 +1,25 @@
 #include "kimera_vio_ros/RosRerunVisualizer.h"
 
+#include <algorithm>
+
 #include <aria_viz/visualizer_rerun.h>
+#include <rerun.hpp>
 
 namespace VIO {
+namespace {
+
+uint8_t rerunColorChannel(const float value) {
+  return static_cast<uint8_t>(std::clamp(value, 0.0f, 255.0f));
+}
+
+rerun::components::Color rerunColor(const Eigen::Vector4f& rgba) {
+  return rerun::components::Color(rerunColorChannel(rgba.x()),
+                                  rerunColorChannel(rgba.y()),
+                                  rerunColorChannel(rgba.z()),
+                                  rerunColorChannel(rgba.w()));
+}
+
+}  // namespace
 
 class RosRerunVisualizer::Impl {
  public:
@@ -37,12 +54,140 @@ void RosRerunVisualizer::drawScalar(const std::string& entity_path,
   impl_->visualizer_.drawScalar(entity_path, value);
 }
 
+void RosRerunVisualizer::clearEntity(const std::string& entity_path) {
+  impl_->visualizer_.rec()->log(entity_path, rerun::Clear(false));
+}
+
+void RosRerunVisualizer::drawGraph(
+    const std::string& entity_path,
+    const std::vector<RerunGraphNode>& nodes,
+    const std::vector<std::pair<std::string, std::string>>& edges,
+    const bool show_labels) {
+  std::vector<rerun::components::GraphNode> node_ids;
+  std::vector<rerun::components::Position2D> positions;
+  std::vector<rerun::components::Color> colors;
+  std::vector<rerun::components::Text> labels;
+  std::vector<rerun::components::Radius> radii;
+  std::vector<rerun::components::ShowLabels> label_visibility;
+  node_ids.reserve(nodes.size());
+  positions.reserve(nodes.size());
+  colors.reserve(nodes.size());
+  labels.reserve(nodes.size());
+  radii.reserve(nodes.size());
+  label_visibility.reserve(nodes.size());
+
+  for (const auto& node : nodes) {
+    node_ids.emplace_back(node.id);
+    positions.emplace_back(node.x, node.y);
+    colors.emplace_back(node.red, node.green, node.blue, node.alpha);
+    labels.emplace_back(node.label);
+    radii.emplace_back(
+        rerun::components::Radius::ui_points(node.radius_ui_points));
+    label_visibility.emplace_back(show_labels || node.show_label);
+  }
+
+  std::vector<rerun::components::GraphEdge> graph_edges;
+  graph_edges.reserve(edges.size());
+  for (const auto& edge : edges) {
+    graph_edges.emplace_back(edge.first, edge.second);
+  }
+
+  impl_->visualizer_.rec()->log(
+      entity_path,
+      rerun::GraphNodes(node_ids)
+          .with_positions(positions)
+          .with_colors(colors)
+          .with_labels(labels)
+          .with_many_show_labels(label_visibility)
+          .with_radii(radii),
+      rerun::GraphEdges(graph_edges));
+}
+
 void RosRerunVisualizer::drawPoints(
     const std::string& entity_path,
     const std::vector<gtsam::Point3>& points,
     const Eigen::Vector4f& rgba,
     float radius) {
   impl_->visualizer_.drawPoints(entity_path, points, rgba, radius);
+}
+
+void RosRerunVisualizer::drawLabeledPoints(
+    const std::string& entity_path,
+    const std::vector<gtsam::Point3>& points,
+    const std::vector<std::string>& labels,
+    const Eigen::Vector4f& rgba,
+    const float radius_ui_points,
+    const bool show_labels) {
+  if (points.empty()) {
+    clearEntity(entity_path);
+    return;
+  }
+
+  std::vector<rerun::components::Position3D> positions;
+  positions.reserve(points.size());
+  for (const auto& point : points) {
+    positions.emplace_back(static_cast<float>(point.x()),
+                           static_cast<float>(point.y()),
+                           static_cast<float>(point.z()));
+  }
+
+  std::vector<rerun::components::Text> rerun_labels;
+  rerun_labels.reserve(labels.size());
+  for (const auto& label : labels) {
+    rerun_labels.emplace_back(label);
+  }
+
+  auto archetype =
+      rerun::Points3D(positions)
+          .with_colors(rerunColor(rgba))
+          .with_radii(
+              rerun::components::Radius::ui_points(radius_ui_points))
+          .with_show_labels(show_labels);
+  if (rerun_labels.size() == positions.size()) {
+    archetype = std::move(archetype).with_labels(rerun_labels);
+  }
+  impl_->visualizer_.rec()->log(entity_path, archetype);
+}
+
+void RosRerunVisualizer::drawLineStrips(
+    const std::string& entity_path,
+    const std::vector<RerunLineStrip3D>& strips,
+    const Eigen::Vector4f& rgba,
+    const float line_width_ui_points,
+    const bool show_labels) {
+  std::vector<rerun::components::LineStrip3D> rerun_strips;
+  std::vector<rerun::components::Text> rerun_labels;
+  rerun_strips.reserve(strips.size());
+  rerun_labels.reserve(strips.size());
+
+  for (const auto& strip : strips) {
+    if (strip.points.size() < 2u) {
+      continue;
+    }
+    std::vector<rerun::datatypes::Vec3D> points;
+    points.reserve(strip.points.size());
+    for (const auto& point : strip.points) {
+      points.emplace_back(static_cast<float>(point.x()),
+                          static_cast<float>(point.y()),
+                          static_cast<float>(point.z()));
+    }
+    rerun_strips.emplace_back(points);
+    rerun_labels.emplace_back(strip.label);
+  }
+
+  if (rerun_strips.empty()) {
+    clearEntity(entity_path);
+    return;
+  }
+
+  impl_->visualizer_.rec()->log(
+      entity_path,
+      rerun::LineStrips3D(rerun_strips)
+          .with_colors(rerunColor(rgba))
+          .with_radii(rerun::components::Radius::ui_points(
+              line_width_ui_points))
+          .with_labels(rerun_labels)
+          .with_show_labels(show_labels));
 }
 
 void RosRerunVisualizer::drawTrajectory(
