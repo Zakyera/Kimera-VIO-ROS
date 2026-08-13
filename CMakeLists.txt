@@ -27,6 +27,11 @@ catkin_simple()
 cs_add_library(${PROJECT_NAME}
   # Include files are just here for IDEs
   include/kimera_vio_ros/KimeraVioRos.h
+  include/kimera_vio_ros/CbsRelativeFrameConversion.h
+  include/kimera_vio_ros/DcregSha256.h
+  include/kimera_vio_ros/DcregShadowAnalysis.h
+  include/kimera_vio_ros/DcregShadowAnalyzer.h
+  include/kimera_vio_ros/NonBlockingSpscQueue.h
   include/kimera_vio_ros/RosBagDataProvider.h
   include/kimera_vio_ros/RosDataProviderInterface.h
   include/kimera_vio_ros/RosDisplay.h
@@ -37,6 +42,10 @@ cs_add_library(${PROJECT_NAME}
   include/kimera_vio_ros/utils/UtilsRos.h
   include/kimera_vio_ros/utils/CsvPublisher.h
   src/KimeraVioRos.cpp
+  src/CbsRelativeFrameConversion.cpp
+  src/DcregSha256.cpp
+  src/DcregShadowAnalysis.cpp
+  src/DcregShadowAnalyzer.cpp
   src/RosDataProviderInterface.cpp
   src/RosBagDataProvider.cpp
   src/RosOnlineDataProvider.cpp
@@ -143,7 +152,28 @@ target_include_directories(testKimeraVioRos
   SYSTEM BEFORE PRIVATE
     ${OpenCV_INCLUDE_DIRS}
 )
+if(EXISTS "${GTSAM_VENDORED_EIGEN_INCLUDE}/Eigen/Dense")
+  target_include_directories(testKimeraVioRos
+    SYSTEM BEFORE PRIVATE
+      ${GTSAM_VENDORED_EIGEN_INCLUDE}
+  )
+endif()
 target_link_libraries(testKimeraVioRos ${PROJECT_NAME})
+
+catkin_add_gtest(dcreg_shadow_analysis_test
+  test/DcregShadowAnalysisTest.cpp
+)
+target_include_directories(dcreg_shadow_analysis_test
+  SYSTEM BEFORE PRIVATE
+    ${OpenCV_INCLUDE_DIRS}
+)
+if(EXISTS "${GTSAM_VENDORED_EIGEN_INCLUDE}/Eigen/Dense")
+  target_include_directories(dcreg_shadow_analysis_test
+    SYSTEM BEFORE PRIVATE
+      ${GTSAM_VENDORED_EIGEN_INCLUDE}
+  )
+endif()
+target_link_libraries(dcreg_shadow_analysis_test ${PROJECT_NAME})
 
 cs_install()
 

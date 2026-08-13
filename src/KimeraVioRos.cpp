@@ -52,6 +52,7 @@
 // Dependencies from this repository
 #include "kimera_vio_ros/RosBagDataProvider.h"
 #include "kimera_vio_ros/RosDataProviderInterface.h"
+#include "kimera_vio_ros/CbsRelativeFrameConversion.h"
 #include "kimera_vio_ros/RosOnlineDataProvider.h"
 #include "kimera_vio_ros/utils/UtilsRos.h"
 
@@ -667,6 +668,31 @@ KimeraVioRos::KimeraVioRos()
   nh_private_.param<std::string>("cbs_agent_id", cbs_agent_id, "k");
   cbs_agent_id_ = resolveAgentId(cbs_agent_id);
 
+  dcreg_shadow::Config shadow_config;
+  bool shadow_section_present = false;
+  std::string shadow_config_error;
+  if (!dcreg_shadow::loadConfig(nh_private_,
+                                cbs_odom_belief_in_topic_,
+                                &shadow_config,
+                                &shadow_section_present,
+                                &shadow_config_error)) {
+    LOG(ERROR) << "Stage 2B shadow analysis disabled: "
+               << shadow_config_error;
+  } else if (shadow_config.enabled &&
+             !headless_cbs_belief_bridge_enable_) {
+    LOG(WARNING) << "Stage 2B shadow analysis requested while the Kimera CBS "
+                    "belief bridge is disabled; Stage 2B remains disabled.";
+  } else if (shadow_config.enabled) {
+    dcreg_shadow_analyzer_ = std::make_unique<dcreg_shadow::Analyzer>(
+        ros::NodeHandle(), std::move(shadow_config));
+    LOG(INFO) << "Passive Stage 2B DCReg shadow analysis enabled; receiver "
+                 "session="
+              << dcreg_shadow_analyzer_->receiverSessionUuid() << ".";
+  } else if (shadow_section_present) {
+    LOG(INFO) << "Passive Stage 2B DCReg shadow analysis disabled by "
+                 "configuration.";
+  }
+
   initializeHeadlessCbsBeliefBridge();
   if (!use_rviz_) {
     initializeHeadlessOdometryPublisher();
@@ -678,6 +704,56 @@ KimeraVioRos::KimeraVioRos()
 #undef MAKE_CONFIG_FILEPATH
 
 KimeraVioRos::~KimeraVioRos() {
+  if (dcreg_shadow_analyzer_) {
+    if (vio_pipeline_) {
+      vio_pipeline_->registerExternalBeliefMatchDiagnosticCallback({});
+    }
+    dcreg_shadow_analyzer_->stop();
+    const auto stats = dcreg_shadow_analyzer_->statistics();
+    LOG(INFO) << "Stage 2B shadow final statistics: arrays="
+              << stats.shadow_arrays_published
+              << " entries=" << stats.shadow_entries_published
+              << " belief_arrays_received=" << stats.belief_arrays_received
+              << " metadata_arrays_received=" << stats.metadata_arrays_received
+              << " receiver_observations_received="
+              << stats.receiver_observations_received
+              << " drops=" << stats.dropped_shadow_arrays
+              << " dropped_beliefs=" << stats.dropped_belief_arrays
+              << " dropped_metadata=" << stats.dropped_metadata_arrays
+              << " dropped_receiver="
+              << stats.dropped_receiver_observations
+              << " orphan_beliefs=" << stats.orphan_beliefs
+              << " orphan_metadata=" << stats.orphan_metadata
+              << " orphan_receiver=" << stats.orphan_receiver_observations
+              << " duplicate_metadata=" << stats.exact_duplicate_metadata
+              << " conflicting_metadata="
+              << stats.conflicting_duplicate_metadata
+              << " worker_failures=" << stats.worker_failures
+              << " producer_waits=" << stats.producer_waits
+              << " max_belief_queue_depth="
+              << stats.maximum_belief_queue_depth
+              << " max_metadata_queue_depth="
+              << stats.maximum_metadata_queue_depth
+              << " max_receiver_queue_depth="
+              << stats.maximum_receiver_queue_depth
+              << " max_pending_beliefs=" << stats.maximum_pending_beliefs
+              << " max_pending_metadata=" << stats.maximum_pending_metadata
+              << " max_pending_receiver="
+              << stats.maximum_pending_receiver_observations
+              << " max_belief_enqueue_us="
+              << static_cast<double>(stats.maximum_belief_enqueue_time_ns) /
+                     1000.0
+              << " max_receiver_enqueue_us="
+              << static_cast<double>(stats.maximum_receiver_enqueue_time_ns) /
+                     1000.0
+              << " worker_ms="
+              << static_cast<double>(stats.worker_time_ns) / 1.0e6
+              << " association_ms="
+              << static_cast<double>(stats.association_time_ns) / 1.0e6
+              << " residual_ms="
+              << static_cast<double>(stats.residual_time_ns) / 1.0e6
+              << " published_bytes=" << stats.published_bytes << ".";
+  }
   // necessary to clean this before the pipeline disappears (contains a bare
   // pointer to memory that the pipline owns)
   if (lcd_registration_server_) {
@@ -768,6 +844,14 @@ bool KimeraVioRos::runKimeraVio() {
   }
 
   CHECK(vio_pipeline_) << "Vio pipeline construction failed.";
+  if (dcreg_shadow_analyzer_) {
+    vio_pipeline_->registerExternalBeliefMatchDiagnosticCallback(
+        [this](const ExternalBeliefMatchDiagnostic& observation) {
+          if (dcreg_shadow_analyzer_) {
+            dcreg_shadow_analyzer_->tryEnqueueReceiverObservation(observation);
+          }
+        });
+  }
   if (headless_cbs_belief_bridge_enable_ ||
       (!use_rviz_ &&
        (headless_odometry_publish_enable_ ||
@@ -2333,6 +2417,10 @@ void KimeraVioRos::poseOdomBeliefInCallback(
       return;
     }
 
+    const std::uint64_t shadow_receipt_sequence =
+        dcreg_shadow_analyzer_
+            ? dcreg_shadow_analyzer_->nextBeliefReceiptSequence()
+            : 0u;
     std::vector<ExternalOdometryBelief> converted_beliefs;
     converted_beliefs.reserve(msg->beliefs.size());
     size_t dropped_by_receive_gate = 0u;
@@ -2343,15 +2431,64 @@ void KimeraVioRos::poseOdomBeliefInCallback(
     gtsam::Pose3 external_T_base;
     if (cbs_external_pose_frame_id_ != base_link_frame_id_ &&
         !lookupExternalPoseFrameTransform(&base_T_external, &external_T_base)) {
+      if (dcreg_shadow_analyzer_) {
+        for (std::size_t belief_ordinal = 0u;
+             belief_ordinal < msg->beliefs.size();
+             ++belief_ordinal) {
+          const auto& belief = msg->beliefs[belief_ordinal];
+          if (belief.source_agent == cbs_agent_id_) {
+            continue;
+          }
+          ExternalBeliefMatchDiagnostic diagnostic;
+          diagnostic.shadow_identity_valid = true;
+          diagnostic.shadow_receipt_sequence = shadow_receipt_sequence;
+          diagnostic.shadow_belief_ordinal =
+              static_cast<std::uint32_t>(belief_ordinal);
+          diagnostic.source_agent = belief.source_agent;
+          diagnostic.sender_from_pose_index = belief.from_pose_index;
+          diagnostic.sender_to_pose_index = belief.to_pose_index;
+          diagnostic.sender_from_stamp_sec = belief.from_stamp_sec;
+          diagnostic.sender_to_stamp_sec = belief.to_stamp_sec;
+          diagnostic.sender_frame_conversion_available = false;
+          diagnostic.status = ExternalBeliefMatchDiagnostic::Status::Rejected;
+          diagnostic.terminal = true;
+          diagnostic.reason = "frame_conversion_unavailable";
+          dcreg_shadow_analyzer_->tryEnqueueReceiverObservation(diagnostic);
+        }
+        dcreg_shadow_analyzer_->tryEnqueueBeliefArray(
+            *msg, shadow_receipt_sequence);
+      }
       return;
     }
 
-    for (const auto& belief : msg->beliefs) {
+    for (std::size_t belief_ordinal = 0u;
+         belief_ordinal < msg->beliefs.size();
+         ++belief_ordinal) {
+      const auto& belief = msg->beliefs[belief_ordinal];
       if (belief.source_agent == cbs_agent_id_) {
         continue;
       }
       if (isIncomingOdomBeliefBeforeReceiveGate(belief)) {
         ++dropped_by_receive_gate;
+        if (dcreg_shadow_analyzer_) {
+          ExternalBeliefMatchDiagnostic diagnostic;
+          diagnostic.shadow_identity_valid = true;
+          diagnostic.shadow_receipt_sequence = shadow_receipt_sequence;
+          diagnostic.shadow_belief_ordinal =
+              static_cast<std::uint32_t>(belief_ordinal);
+          diagnostic.source_agent = belief.source_agent;
+          diagnostic.sender_from_pose_index = belief.from_pose_index;
+          diagnostic.sender_to_pose_index = belief.to_pose_index;
+          diagnostic.sender_from_stamp_sec = belief.from_stamp_sec;
+          diagnostic.sender_to_stamp_sec = belief.to_stamp_sec;
+          diagnostic.shadow_invalid_reason_mask =
+              liorf::DcregBeliefShadowAnalysis::
+                  REASON_RECEIVE_GATE_REJECTED;
+          diagnostic.status = ExternalBeliefMatchDiagnostic::Status::Rejected;
+          diagnostic.terminal = true;
+          diagnostic.reason = "receive_gate";
+          dcreg_shadow_analyzer_->tryEnqueueReceiverObservation(diagnostic);
+        }
         continue;
       }
 
@@ -2369,6 +2506,12 @@ void KimeraVioRos::poseOdomBeliefInCallback(
       converted.sender_frame_id = belief.header.frame_id;
       converted.received_wall_time_sec = ros::WallTime::now().toSec();
       converted.relax_factor = belief.relax_factor;
+      if (dcreg_shadow_analyzer_) {
+        converted.shadow_identity_valid = true;
+        converted.shadow_receipt_sequence = shadow_receipt_sequence;
+        converted.shadow_belief_ordinal =
+            static_cast<std::uint32_t>(belief_ordinal);
+      }
 
       gtsam::Pose3 transformed_relative =
           gtsam::Pose3::Expmap(toVector6(belief.relative_mu));
@@ -2376,13 +2519,14 @@ void KimeraVioRos::poseOdomBeliefInCallback(
           poseCovarianceFromMatrix(toMatrix6(belief.covariance));
 
       if (cbs_external_pose_frame_id_ != base_link_frame_id_) {
-        transformed_relative =
-            base_T_external * transformed_relative * external_T_base;
-        const gtsam::Matrix6 adjoint_base_external =
-            base_T_external.AdjointMap();
-        transformed_covariance = poseCovarianceFromMatrix(
-            adjoint_base_external * transformed_covariance *
-            adjoint_base_external.transpose());
+        const auto transformed = cbs_frame_conversion::convertExternalToBase(
+            transformed_relative,
+            transformed_covariance,
+            base_T_external,
+            external_T_base);
+        transformed_relative = transformed.relative_pose;
+        transformed_covariance =
+            poseCovarianceFromMatrix(transformed.covariance);
       }
 
       fromVector6(gtsam::Pose3::Logmap(transformed_relative),
@@ -2403,6 +2547,10 @@ void KimeraVioRos::poseOdomBeliefInCallback(
     }
 
     bufferExternalOdometryBeliefs(converted_beliefs);
+    if (dcreg_shadow_analyzer_) {
+      dcreg_shadow_analyzer_->tryEnqueueBeliefArray(
+          *msg, shadow_receipt_sequence);
+    }
   } catch (const std::exception& e) {
     LOG(WARNING) << "Kimera headless CBS incoming odometry belief callback "
                     "skipped: "

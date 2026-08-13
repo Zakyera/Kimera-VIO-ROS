@@ -57,6 +57,7 @@
   <arg name="cbs_belief_bridge_enable" default="true"/>
   <arg name="cbs_odom_belief_in_topic" default="/kimera/cbs/odom_belief_in"/>
   <arg name="cbs_odom_belief_out_topic" default="/kimera/cbs/odom_belief_out"/>
+  <arg name="dcreg_shadow_config_file" default=""/>
   <arg name="cbs_belief_forward_queue_limit" default="800"/>
   <arg name="cbs_belief_receive_start_delay_sec" default="0.0"/>
   <arg name="cbs_external_belief_timestamp_tolerance_sec" default="0.2"/>

@@ -43,6 +43,8 @@ file and include this one to launch KimeraVIO on the dataset of your choice -->
   <arg name="cbs_belief_bridge_enable" default="true"/>
   <arg name="cbs_odom_belief_in_topic" default="/kimera/cbs/odom_belief_in"/>
   <arg name="cbs_odom_belief_out_topic" default="/kimera/cbs/odom_belief_out"/>
+  <!-- Optional Stage 2B YAML. Empty means the section is genuinely absent. -->
+  <arg name="dcreg_shadow_config_file" default=""/>
   <arg name="cbs_belief_forward_queue_limit" default="800"/>
   <arg name="cbs_belief_receive_start_delay_sec" default="0.0"/>
   <arg name="cbs_external_belief_timestamp_tolerance_sec" default="0.2"/>
@@ -362,6 +364,9 @@ file and include this one to launch KimeraVIO on the dataset of your choice -->
     <param name="cbs_belief_forward_queue_limit" value="$(arg cbs_belief_forward_queue_limit)"/>
     <param name="cbs_belief_receive_start_delay_sec" value="$(arg cbs_belief_receive_start_delay_sec)"/>
     <param name="cbs_external_pose_frame_id" value="$(arg cbs_external_pose_frame_id)"/>
+    <rosparam command="load"
+              file="$(arg dcreg_shadow_config_file)"
+              if="$(eval arg('dcreg_shadow_config_file') != '')"/>
     <param name="rerun_visualizer_enable" value="$(arg rerun_visualizer_enable)"/>
     <param name="rerun_recording_id" value="$(arg rerun_recording_id)"/>
     <param name="rerun_host" value="$(arg rerun_host)"/>

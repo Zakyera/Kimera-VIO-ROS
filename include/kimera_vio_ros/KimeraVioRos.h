@@ -19,6 +19,7 @@
 
 #include <liorf/pose_odom_belief_array.h>
 #include "kimera_vio_ros/RosDataProviderInterface.h"
+#include "kimera_vio_ros/DcregShadowAnalyzer.h"
 #include "kimera_vio_ros/RosDisplay.h"
 #include "kimera_vio_ros/RosRerunVisualizer.h"
 #include "kimera_vio_ros/RosVisualizer.h"
@@ -102,6 +103,10 @@ class KimeraVioRos {
  protected:
   //! ROS
   ros::NodeHandle nh_private_;
+
+  // Declared before the VIO pipeline so the pipeline (and its passive
+  // callback) is destroyed first during object teardown.
+  std::unique_ptr<dcreg_shadow::Analyzer> dcreg_shadow_analyzer_;
 
   //! VIO
   VioParams::Ptr vio_params_;
