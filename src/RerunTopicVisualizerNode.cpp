@@ -262,6 +262,19 @@ bool odometryToPose(const nav_msgs::Odometry& odom, gtsam::Pose3* pose) {
   return pose->matrix().allFinite();
 }
 
+void poseToOdometryPose(const gtsam::Pose3& pose,
+                        nav_msgs::Odometry* odometry) {
+  CHECK_NOTNULL(odometry);
+  const gtsam::Quaternion quaternion = pose.rotation().toQuaternion();
+  odometry->pose.pose.position.x = pose.x();
+  odometry->pose.pose.position.y = pose.y();
+  odometry->pose.pose.position.z = pose.z();
+  odometry->pose.pose.orientation.x = quaternion.x();
+  odometry->pose.pose.orientation.y = quaternion.y();
+  odometry->pose.pose.orientation.z = quaternion.z();
+  odometry->pose.pose.orientation.w = quaternion.w();
+}
+
 gtsam::Matrix6 poseCovarianceFromOdometry(const nav_msgs::Odometry& odom) {
   gtsam::Matrix6 covariance = gtsam::Matrix6::Zero();
   static const int remapping[6] = {3, 4, 5, 0, 1, 2};
@@ -804,7 +817,17 @@ bool loadGroundTruthTrajectory(const std::string& path,
       continue;
     }
 
+    // Accept both the existing whitespace-separated TUM-style rows
+    //   stamp x y z qx qy qz qw
+    // and Oxford's original Newer College CSV rows
+    //   sec,nsec,x,y,z,qx,qy,qz,qw.
+    std::replace(line.begin(), line.end(), ',', ' ');
     std::istringstream iss(line);
+    std::vector<double> fields;
+    double field = 0.0;
+    while (iss >> field) {
+      fields.push_back(field);
+    }
     double stamp_sec = 0.0;
     double x = 0.0;
     double y = 0.0;
@@ -813,7 +836,25 @@ bool loadGroundTruthTrajectory(const std::string& path,
     double qy = 0.0;
     double qz = 0.0;
     double qw = 1.0;
-    if (!(iss >> stamp_sec >> x >> y >> z >> qx >> qy >> qz >> qw)) {
+    if (fields.size() == 8u) {
+      stamp_sec = fields[0];
+      x = fields[1];
+      y = fields[2];
+      z = fields[3];
+      qx = fields[4];
+      qy = fields[5];
+      qz = fields[6];
+      qw = fields[7];
+    } else if (fields.size() == 9u) {
+      stamp_sec = fields[0] + fields[1] * 1.0e-9;
+      x = fields[2];
+      y = fields[3];
+      z = fields[4];
+      qx = fields[5];
+      qy = fields[6];
+      qz = fields[7];
+      qw = fields[8];
+    } else {
       LOG(WARNING) << "Skipping malformed Rerun ground-truth row "
                    << line_number << " in " << path;
       continue;
@@ -1110,6 +1151,157 @@ void anchorTrajectoryStartToOrigin(std::vector<gtsam::Pose3>* poses) {
 
 class RerunTopicVisualizer {
  public:
+  void publishStandaloneGlimDashboardBlueprint() {
+    if (!standalone_glim_dashboard_blueprint_enable_ || !blueprint_stream_) {
+      return;
+    }
+
+    logBlueprintView(blueprint_stream_.get(),
+                     "standalone_glim_factor_graph",
+                     "3D",
+                     "GLIM fixed-lag factor graph",
+                     "/glim/factor_graph_inspector/spatial",
+                     {
+                         "+ /glim/factor_graph_inspector/spatial/**",
+                         "- /__properties/**",
+                     });
+
+    logBlueprintView(blueprint_stream_.get(),
+                     "standalone_glim_trajectory",
+                     "3D",
+                     "Ground truth vs GLIM trajectory",
+                     "/aligned",
+                     {
+                         "+ /aligned/ground_truth/**",
+                         "+ /aligned/glim/**",
+                         "- /aligned/metadata/**",
+                         "- /__properties/**",
+                     });
+
+    logBlueprintView(blueprint_stream_.get(),
+                     "standalone_glim_scan",
+                     "3D",
+                     "GLIM LiDAR scan",
+                     "/glim/current_scan",
+                     {
+                         "+ /glim/current_scan/**",
+                         "- /__properties/**",
+                     });
+
+    logBlueprintView(blueprint_stream_.get(),
+                     "standalone_glim_left_video",
+                     "2D",
+                     "Original left camera",
+                     "/video/left",
+                     {
+                         "+ /video/left/**",
+                         "- /__properties/**",
+                     });
+
+    logBlueprintView(blueprint_stream_.get(),
+                     "standalone_glim_right_video",
+                     "2D",
+                     "Original right camera",
+                     "/video/right",
+                     {
+                         "+ /video/right/**",
+                         "- /__properties/**",
+                     });
+
+    logBlueprintView(blueprint_stream_.get(),
+                     "standalone_glim_factor_counts",
+                     "TimeSeries",
+                     "GLIM fixed-lag factor composition",
+                     "/glim/factor_graph_inspector/counts",
+                     {
+                         "+ /glim/factor_graph_inspector/counts/**",
+                         "- /__properties/**",
+                     });
+
+    logBlueprintView(blueprint_stream_.get(),
+                     "standalone_glim_alignment",
+                     "TimeSeries",
+                     "Trajectory alignment diagnostics",
+                     "/aligned/metadata",
+                     {
+                         "+ /aligned/metadata/**",
+                         "- /__properties/**",
+                     });
+
+    const std::string factor_graph_view =
+        blueprintViewPath("standalone_glim_factor_graph");
+    const std::string trajectory_view =
+        blueprintViewPath("standalone_glim_trajectory");
+    const std::string scan_view =
+        blueprintViewPath("standalone_glim_scan");
+    const std::string left_video_view =
+        blueprintViewPath("standalone_glim_left_video");
+    const std::string right_video_view =
+        blueprintViewPath("standalone_glim_right_video");
+    const std::string factor_counts_view =
+        blueprintViewPath("standalone_glim_factor_counts");
+    const std::string alignment_view =
+        blueprintViewPath("standalone_glim_alignment");
+
+    logBlueprintContainer(
+        blueprint_stream_.get(),
+        "standalone_glim_top",
+        rerun::blueprint::components::ContainerKind::Horizontal,
+        "GLIM estimates",
+        {factor_graph_view, trajectory_view},
+        {1.0f, 1.0f});
+
+    logBlueprintContainer(
+        blueprint_stream_.get(),
+        "standalone_glim_media",
+        rerun::blueprint::components::ContainerKind::Horizontal,
+        "Sensor playback",
+        {scan_view, left_video_view, right_video_view},
+        {1.4f, 1.0f, 1.0f});
+
+    logBlueprintContainer(
+        blueprint_stream_.get(),
+        "standalone_glim_diagnostics",
+        rerun::blueprint::components::ContainerKind::Horizontal,
+        "Diagnostics",
+        {factor_counts_view, alignment_view},
+        {1.4f, 1.0f});
+
+    const std::string top_container =
+        blueprintContainerPath("standalone_glim_top");
+    const std::string media_container =
+        blueprintContainerPath("standalone_glim_media");
+    const std::string diagnostics_container =
+        blueprintContainerPath("standalone_glim_diagnostics");
+
+    logBlueprintContainer(
+        blueprint_stream_.get(),
+        "standalone_glim_root",
+        rerun::blueprint::components::ContainerKind::Vertical,
+        "Standalone GLIM validation",
+        {top_container, media_container, diagnostics_container},
+        {},
+        {1.25f, 1.0f, 0.65f});
+
+    blueprint_stream_->set_time_sequence("blueprint", 0);
+    blueprint_stream_->log(
+        "viewport",
+        rerun::blueprint::archetypes::ViewportBlueprint()
+            .with_root_container(rerun::blueprint::components::RootContainer(
+                makeDeterministicUuid("container:standalone_glim_root")))
+            .with_auto_layout(rerun::blueprint::components::AutoLayout(false))
+            .with_auto_views(rerun::blueprint::components::AutoViews(false)));
+
+    blueprint_stream_->log(
+        "time_panel",
+        rerun::blueprint::archetypes::TimePanelBlueprint()
+            .with_play_state(
+                rerun::blueprint::components::PlayState::Following)
+            .with_loop_mode(rerun::blueprint::components::LoopMode::Off));
+
+    (void)blueprint_stream_->flush_blocking(2.0f);
+  }
+
   void publishRawCbsDashboardBlueprint() {
     if (!raw_cbs_dashboard_blueprint_enable_ || !blueprint_stream_) {
       return;
@@ -1399,6 +1591,36 @@ class RerunTopicVisualizer {
     if (secondary_frame_name_.empty()) {
       secondary_frame_name_ = "base_link";
     }
+    private_nh_.param<bool>("secondary_pose_right_compose_enable",
+                            secondary_pose_right_compose_enable_,
+                            false);
+    if (secondary_pose_right_compose_enable_) {
+      std::vector<double> values;
+      if (!private_nh_.getParam("secondary_pose_right_compose", values) ||
+          values.size() != 7u) {
+        LOG(ERROR) << "secondary_pose_right_compose_enable requires a "
+                      "seven-element [x,y,z,qx,qy,qz,qw] parameter; "
+                      "disabling the conversion.";
+        secondary_pose_right_compose_enable_ = false;
+      } else {
+        const double quaternion_norm =
+            std::sqrt(values[3] * values[3] + values[4] * values[4] +
+                      values[5] * values[5] + values[6] * values[6]);
+        if (!std::isfinite(quaternion_norm) ||
+            quaternion_norm < kMinQuaternionNorm) {
+          LOG(ERROR) << "secondary_pose_right_compose contains an invalid "
+                        "quaternion; disabling the conversion.";
+          secondary_pose_right_compose_enable_ = false;
+        } else {
+          secondary_pose_right_compose_ = gtsam::Pose3(
+              gtsam::Rot3::Quaternion(values[6] / quaternion_norm,
+                                      values[3] / quaternion_norm,
+                                      values[4] / quaternion_norm,
+                                      values[5] / quaternion_norm),
+              gtsam::Point3(values[0], values[1], values[2]));
+        }
+      }
+    }
     private_nh_.param<double>("publish_rate_hz", publish_rate_hz_, 5.0);
     private_nh_.param<bool>("uncertainty_enable", uncertainty_enable_, true);
     private_nh_.param<bool>("raw_covariance_enable",
@@ -1503,10 +1725,19 @@ class RerunTopicVisualizer {
     private_nh_.param<bool>("common_aligned_provisional_start_enable",
                             common_aligned_provisional_start_enable_,
                             false);
+    private_nh_.param<bool>("common_aligned_start_pose_only_enable",
+                            common_aligned_start_pose_only_enable_,
+                            false);
     private_nh_.param<bool>("freeze_common_aligned_overlay_alignment_enable",
                             freeze_common_aligned_overlay_alignment_enable_,
                             false);
+    private_nh_.param<bool>("ground_truth_alignment_gravity_preserving_enable",
+                            ground_truth_alignment_gravity_preserving_enable_,
+                            false);
     private_nh_.param<std::string>("ground_truth_path", ground_truth_path_, "");
+    private_nh_.param<double>("ground_truth_timestamp_offset_sec",
+                              ground_truth_timestamp_offset_sec_,
+                              0.0);
     private_nh_.param<double>("ground_truth_max_timestamp_diff_sec",
                               ground_truth_max_timestamp_diff_sec_,
                               0.75);
@@ -1526,6 +1757,9 @@ class RerunTopicVisualizer {
     private_nh_.param<std::string>("rerun_host", rerun_host_, "auto");
     private_nh_.param<bool>("raw_cbs_dashboard_blueprint_enable",
                             raw_cbs_dashboard_blueprint_enable_,
+                            false);
+    private_nh_.param<bool>("standalone_glim_dashboard_blueprint_enable",
+                            standalone_glim_dashboard_blueprint_enable_,
                             false);
 
     if (!std::isfinite(publish_rate_hz_) || publish_rate_hz_ <= 0.0) {
@@ -1555,15 +1789,28 @@ class RerunTopicVisualizer {
 
     visualizer_ = std::make_unique<RosRerunVisualizer>(
         "cbsms", recording_id_, rerun_host_);
-    if (raw_cbs_dashboard_blueprint_enable_) {
+    if (raw_cbs_dashboard_blueprint_enable_ ||
+        standalone_glim_dashboard_blueprint_enable_) {
       blueprint_stream_ = std::make_unique<rerun::RecordingStream>(
           "cbsms", recording_id_, rerun::StoreKind::Blueprint);
       blueprint_stream_->connect_grpc(rerun_host_).exit_on_failure();
-      publishRawCbsDashboardBlueprint();
+      blueprint_stream_->send_recording_name(recording_id_);
+      if (standalone_glim_dashboard_blueprint_enable_) {
+        publishStandaloneGlimDashboardBlueprint();
+      } else {
+        publishRawCbsDashboardBlueprint();
+      }
     }
     if (ground_truth_enable_) {
       ground_truth_loaded_ =
           loadGroundTruthTrajectory(ground_truth_path_, &ground_truth_);
+      if (ground_truth_loaded_ &&
+          std::isfinite(ground_truth_timestamp_offset_sec_) &&
+          std::abs(ground_truth_timestamp_offset_sec_) > 1e-12) {
+        for (GroundTruthPose& pose : ground_truth_) {
+          pose.stamp_sec += ground_truth_timestamp_offset_sec_;
+        }
+      }
     }
 
     kimera_sub_ = nh_.subscribe<nav_msgs::Odometry>(
@@ -1637,6 +1884,8 @@ class RerunTopicVisualizer {
               << "', liorf_odom_topic='" << liorf_odom_topic_
               << "', secondary_entity_prefix='" << secondary_entity_prefix_
               << "', secondary_frame_name='" << secondary_frame_name_
+              << "', secondary_pose_right_compose_enable="
+              << (secondary_pose_right_compose_enable_ ? "true" : "false")
               << "', publish_rate_hz=" << publish_rate_hz_
               << ", odometry_queue_size=" << odometry_queue_size_
               << ", point_cloud_queue_size=" << point_cloud_queue_size_
@@ -1677,9 +1926,16 @@ class RerunTopicVisualizer {
               << ", common_aligned_provisional_start_enable="
               << (common_aligned_provisional_start_enable_ ? "true"
                                                            : "false")
+              << ", common_aligned_start_pose_only_enable="
+              << (common_aligned_start_pose_only_enable_ ? "true" : "false")
               << ", freeze_common_aligned_overlay_alignment_enable="
               << (freeze_common_aligned_overlay_alignment_enable_ ? "true"
                                                                   : "false")
+              << ", ground_truth_alignment_gravity_preserving_enable="
+              << (ground_truth_alignment_gravity_preserving_enable_ ? "true"
+                                                                    : "false")
+              << ", ground_truth_timestamp_offset_sec="
+              << ground_truth_timestamp_offset_sec_
               << ", ground_truth_alignment_min_pairs="
               << ground_truth_alignment_min_pairs_
               << ", ground_truth_alignment_min_path_length_m="
@@ -1694,7 +1950,23 @@ class RerunTopicVisualizer {
   }
 
   void liorfCallback(const nav_msgs::Odometry::ConstPtr& msg) {
-    updateSource(msg, &liorf_);
+    if (!secondary_pose_right_compose_enable_) {
+      updateSource(msg, &liorf_);
+      return;
+    }
+
+    gtsam::Pose3 source_pose;
+    if (!odometryToPose(*msg, &source_pose)) {
+      LOG_EVERY_N(WARNING, 100)
+          << "Ignoring secondary odometry with an invalid pose during "
+             "right-composition.";
+      return;
+    }
+    nav_msgs::Odometry::Ptr converted(new nav_msgs::Odometry(*msg));
+    poseToOdometryPose(source_pose.compose(secondary_pose_right_compose_),
+                       converted.get());
+    nav_msgs::Odometry::ConstPtr converted_const = converted;
+    updateSource(converted_const, &liorf_);
   }
 
   void liorfLocalMapCallback(const sensor_msgs::PointCloud2::ConstPtr& msg) {
@@ -2242,7 +2514,23 @@ class RerunTopicVisualizer {
         pathLength2D(source_points) < ground_truth_alignment_min_path_length_m_) {
       return false;
     }
-    if (!estimateSe3Alignment(source_points, target_points, alignment)) {
+    if (ground_truth_alignment_gravity_preserving_enable_) {
+      Se2AlignmentEstimate se2_alignment;
+      if (!estimateSe2Alignment(source_points,
+                                target_points,
+                                &se2_alignment)) {
+        return false;
+      }
+      alignment->target_T_source = gtsam::Pose3(
+          gtsam::Rot3::Rz(se2_alignment.yaw_rad),
+          se2_alignment.translation);
+      alignment->rmse_m = se2_alignment.rmse_m;
+      alignment->mean_m = se2_alignment.mean_m;
+      alignment->max_m = se2_alignment.max_m;
+      alignment->determinant = 1.0;
+    } else if (!estimateSe3Alignment(source_points,
+                                     target_points,
+                                     alignment)) {
       return false;
     }
 
@@ -2462,7 +2750,45 @@ class RerunTopicVisualizer {
     double kimera_max_nearest_diff_sec = 0.0;
     bool secondary_ok = false;
     bool secondary_provisional = false;
-    if (has_secondary_history && freeze_common_aligned_overlay_alignment_enable_ &&
+    if (has_secondary_history && common_aligned_start_pose_only_enable_) {
+      if (secondary_common_alignment_frozen_) {
+        secondary_alignment = frozen_secondary_common_alignment_;
+        secondary_pairs = frozen_secondary_common_alignment_pairs_;
+        secondary_max_nearest_diff_sec =
+            frozen_secondary_common_alignment_max_nearest_diff_sec_;
+        secondary_ok = transformCommonFrameHistory(
+            secondary_history,
+            first_common_stamp_sec,
+            window_end_stamp_sec,
+            origin,
+            secondary_alignment,
+            &aligned_secondary_poses);
+      } else {
+        secondary_ok = estimateProvisionalCommonFrameAlignment(
+            secondary_history,
+            first_common_stamp_sec,
+            window_end_stamp_sec,
+            origin,
+            &secondary_alignment,
+            &aligned_secondary_poses,
+            &secondary_pairs,
+            &secondary_max_nearest_diff_sec);
+        if (secondary_ok) {
+          frozen_secondary_common_alignment_ = secondary_alignment;
+          frozen_secondary_common_alignment_pairs_ = secondary_pairs;
+          frozen_secondary_common_alignment_max_nearest_diff_sec_ =
+              secondary_max_nearest_diff_sec;
+          secondary_common_alignment_frozen_ = true;
+          LOG(INFO) << "Anchored Rerun common-frame alignment for "
+                    << secondary_entity_prefix_
+                    << " to its first timestamp-matched ground-truth pose."
+                    << " max_timestamp_delta_sec="
+                    << secondary_max_nearest_diff_sec << ".";
+        }
+      }
+      secondary_provisional = secondary_ok;
+    } else if (has_secondary_history &&
+               freeze_common_aligned_overlay_alignment_enable_ &&
         secondary_common_alignment_frozen_) {
       secondary_alignment = frozen_secondary_common_alignment_;
       secondary_pairs = frozen_secondary_common_alignment_pairs_;
@@ -2513,7 +2839,42 @@ class RerunTopicVisualizer {
 
     bool kimera_ok = false;
     bool kimera_provisional = false;
-    if (has_kimera_history) {
+    if (has_kimera_history && common_aligned_start_pose_only_enable_) {
+      if (kimera_common_alignment_frozen_) {
+        kimera_alignment = frozen_kimera_common_alignment_;
+        kimera_pairs = frozen_kimera_common_alignment_pairs_;
+        kimera_max_nearest_diff_sec =
+            frozen_kimera_common_alignment_max_nearest_diff_sec_;
+        kimera_ok = transformCommonFrameHistory(kimera_history,
+                                                first_common_stamp_sec,
+                                                window_end_stamp_sec,
+                                                origin,
+                                                kimera_alignment,
+                                                &aligned_kimera_poses);
+      } else {
+        kimera_ok = estimateProvisionalCommonFrameAlignment(
+            kimera_history,
+            first_common_stamp_sec,
+            window_end_stamp_sec,
+            origin,
+            &kimera_alignment,
+            &aligned_kimera_poses,
+            &kimera_pairs,
+            &kimera_max_nearest_diff_sec);
+        if (kimera_ok) {
+          frozen_kimera_common_alignment_ = kimera_alignment;
+          frozen_kimera_common_alignment_pairs_ = kimera_pairs;
+          frozen_kimera_common_alignment_max_nearest_diff_sec_ =
+              kimera_max_nearest_diff_sec;
+          kimera_common_alignment_frozen_ = true;
+          LOG(INFO) << "Anchored Rerun common-frame alignment for Kimera to "
+                       "its first timestamp-matched ground-truth pose."
+                    << " max_timestamp_delta_sec="
+                    << kimera_max_nearest_diff_sec << ".";
+        }
+      }
+      kimera_provisional = kimera_ok;
+    } else if (has_kimera_history) {
       if (freeze_common_aligned_overlay_alignment_enable_ &&
           kimera_common_alignment_frozen_) {
         kimera_alignment = frozen_kimera_common_alignment_;
@@ -2647,6 +3008,11 @@ class RerunTopicVisualizer {
                             first_common_stamp_sec);
     visualizer_->drawScalar("aligned/metadata/window_end_stamp_sec",
                             window_end_stamp_sec);
+    visualizer_->drawScalar(
+        "aligned/metadata/gravity_preserving_alignment",
+        ground_truth_alignment_gravity_preserving_enable_ ? 1.0 : 0.0);
+    visualizer_->drawScalar("aligned/metadata/ground_truth_timestamp_offset_sec",
+                            ground_truth_timestamp_offset_sec_);
     visualizer_->drawScalar("aligned/metadata/origin_gt_stamp_sec",
                             ground_truth_[origin_index].stamp_sec);
     visualizer_->drawScalar("aligned/metadata/origin_gt_diff_sec",
@@ -3210,6 +3576,7 @@ class RerunTopicVisualizer {
   std::string liorf_odom_topic_;
   std::string secondary_entity_prefix_ = "liorf";
   std::string secondary_frame_name_ = "lidar_link";
+  gtsam::Pose3 secondary_pose_right_compose_;
   std::string liorf_local_map_topic_;
   std::string liorf_current_scan_topic_;
   std::string kimera_landmarks_topic_;
@@ -3227,6 +3594,7 @@ class RerunTopicVisualizer {
   double ground_truth_max_timestamp_diff_sec_ = 0.75;
   double ground_truth_alignment_min_path_length_m_ = 3.0;
   double ground_truth_window_duration_sec_ = 60.0;
+  double ground_truth_timestamp_offset_sec_ = 0.0;
   double image_max_hz_ = 10.0;
   double secondary_point_cloud_tf_lookup_timeout_sec_ = 0.05;
   bool uncertainty_enable_ = true;
@@ -3247,11 +3615,15 @@ class RerunTopicVisualizer {
   bool publish_aligned_kimera_enable_ = true;
   bool publish_legacy_online_alignment_enable_ = false;
   bool publish_common_aligned_overlay_enable_ = true;
+  bool secondary_pose_right_compose_enable_ = false;
   bool anchor_common_aligned_start_enable_ = false;
   bool common_aligned_provisional_start_enable_ = false;
+  bool common_aligned_start_pose_only_enable_ = false;
   bool freeze_common_aligned_overlay_alignment_enable_ = false;
+  bool ground_truth_alignment_gravity_preserving_enable_ = false;
   bool ground_truth_enable_ = false;
   bool raw_cbs_dashboard_blueprint_enable_ = false;
+  bool standalone_glim_dashboard_blueprint_enable_ = false;
   bool ground_truth_loaded_ = false;
   bool ground_truth_published_ = false;
   bool ground_truth_wait_logged_ = false;

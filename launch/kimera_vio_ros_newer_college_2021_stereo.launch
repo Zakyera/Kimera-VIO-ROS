@@ -1,0 +1,93 @@
+<launch>
+  <!-- Dataset adapter for the Collection-3 Alphasense forward stereo pair. -->
+  <arg name="dataset_name" default="NewerCollege2021Stereo"/>
+  <arg name="params_folder"
+       default="$(find kimera_vio)/params/NewerCollege2021Stereo"/>
+  <!-- True suppresses the optional pose_graph_tools RViz include. -->
+  <arg name="multirobot" default="true"/>
+  <arg name="verbosity" default="0"/>
+  <arg name="do_coarse_temporal_sync" default="false"/>
+  <arg name="do_fine_temporal_sync" default="false"/>
+
+  <arg name="online" default="true"/>
+  <arg name="should_use_sim_time" default="true"/>
+  <param name="use_sim_time" value="$(arg should_use_sim_time)"/>
+
+  <arg name="log_output" default="false"/>
+  <arg name="log_output_path"
+       default="/workspace/cbs_gtsam4.3/runs/runtime_kimera_logs/newer_college_2021_maths_easy"/>
+  <arg name="log_gt_data" default="false"/>
+  <arg name="gt_topic" default=""/>
+  <arg name="rosbag_path" default="" unless="$(arg online)"/>
+
+  <arg name="left_cam_compressed_topic"
+       default="/alphasense_driver_ros/cam1/compressed"/>
+  <arg name="right_cam_compressed_topic"
+       default="/alphasense_driver_ros/cam0/compressed"/>
+  <arg name="left_cam_topic" default="/newer_college/cam1/image_raw"/>
+  <arg name="right_cam_topic" default="/newer_college/cam0/image_raw"/>
+  <arg name="imu_topic" default="/alphasense_driver_ros/imu"/>
+  <arg name="external_odom_topic" default=""/>
+  <arg name="rgb_image_transport" default="raw"/>
+
+  <arg name="odom_frame_id" default="odom"/>
+  <arg name="base_link_frame_id" default="imu_sensor_frame"/>
+  <arg name="map_frame_id" default="map"/>
+  <arg name="left_cam_frame_id" default="cam1_sensor_frame"/>
+  <arg name="right_cam_frame_id" default="cam0_sensor_frame"/>
+
+  <arg name="use_lcd" default="false"/>
+  <arg name="visualize" default="false"/>
+  <arg name="viz_type" default="2"/>
+  <arg name="use_rviz" default="false"/>
+  <arg name="node_output" default="screen"/>
+  <arg name="no_incremental_pose" default="false"/>
+  <arg name="force_same_image_timestamp" default="true"/>
+  <arg name="rerun_visualizer_enable" default="true"/>
+  <arg name="rerun_recording_id"
+       default="newer_college_maths_easy_kimera_cbs_off_live"/>
+  <arg name="rerun_host"
+       default="rerun+http://172.17.0.1:9876/proxy"/>
+  <arg name="rerun_scalar_metrics_enable" default="true"/>
+  <arg name="rerun_geometry_enable" default="true"/>
+  <arg name="rerun_factor_graph_enable" default="true"/>
+  <arg name="rerun_factor_graph_inspector_enable" default="true"/>
+  <arg name="rerun_factor_graph_inspector_topology_enable" default="true"/>
+  <arg name="rerun_factor_graph_inspector_stride" default="5"/>
+  <arg name="rerun_factor_graph_inspector_include_smart_factors"
+       default="false"/>
+  <arg name="rerun_factor_graph_inspector_max_smart_factors" default="1000"/>
+  <arg name="rerun_world_alignment_enable" default="true"/>
+
+  <!-- Both the ROS belief bridge and Kimera's CBS backend are hard-off here. -->
+  <arg name="cbs_belief_bridge_enable" default="false"/>
+  <arg name="cbs_backend_enable" default="false"/>
+  <arg name="cbs_health_aware_enable" default="false"/>
+  <arg name="cbs_odom_belief_in_topic"
+       default="/newer_college/kimera_only/cbs_disabled_in"/>
+  <arg name="cbs_odom_belief_out_topic"
+       default="/newer_college/kimera_only/cbs_disabled_out"/>
+
+  <node pkg="kimera_vio_ros"
+        type="compressed_to_raw_bridge.py"
+        name="newer_college_cam1_compressed_bridge"
+        output="screen">
+    <param name="input_topic" value="$(arg left_cam_compressed_topic)"/>
+    <param name="output_topic" value="$(arg left_cam_topic)"/>
+    <param name="output_encoding" value="mono8"/>
+    <param name="queue_size" value="30"/>
+  </node>
+
+  <node pkg="kimera_vio_ros"
+        type="compressed_to_raw_bridge.py"
+        name="newer_college_cam0_compressed_bridge"
+        output="screen">
+    <param name="input_topic" value="$(arg right_cam_compressed_topic)"/>
+    <param name="output_topic" value="$(arg right_cam_topic)"/>
+    <param name="output_encoding" value="mono8"/>
+    <param name="queue_size" value="30"/>
+  </node>
+
+  <include file="$(find kimera_vio_ros)/launch/kimera_vio_ros.launch"
+           pass_all_args="true"/>
+</launch>

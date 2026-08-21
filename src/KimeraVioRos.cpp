@@ -613,6 +613,9 @@ KimeraVioRos::KimeraVioRos()
   nh_private_.param("rerun_factor_graph_inspector_enable",
                     headless_rerun_factor_graph_inspector_enable_,
                     false);
+  nh_private_.param("rerun_factor_graph_inspector_topology_enable",
+                    headless_rerun_factor_graph_inspector_topology_enable_,
+                    true);
   nh_private_.param("rerun_factor_graph_inspector_stride",
                     headless_rerun_factor_graph_inspector_stride_,
                     5);
@@ -697,6 +700,10 @@ KimeraVioRos::KimeraVioRos()
   if (!use_rviz_) {
     initializeHeadlessOdometryPublisher();
     initializeHeadlessLandmarksPublisher();
+  }
+  if (!use_rviz_ || headless_rerun_visualizer_enable_ ||
+      headless_rerun_scalar_metrics_enable_ ||
+      headless_rerun_factor_graph_inspector_enable_) {
     initializeHeadlessRerunVisualizer();
   }
 }
@@ -855,7 +862,8 @@ bool KimeraVioRos::runKimeraVio() {
   if (headless_cbs_belief_bridge_enable_ ||
       (!use_rviz_ &&
        (headless_odometry_publish_enable_ ||
-        headless_landmarks_publish_enable_ || headless_rerun_visualizer_))) {
+        headless_landmarks_publish_enable_)) ||
+      headless_rerun_visualizer_) {
     vio_pipeline_->registerExternalBackendOutputCallback(
         [this](const BackendOutput::Ptr& output) {
           publishHeadlessBackendOutput(output);
@@ -1158,6 +1166,10 @@ void KimeraVioRos::initializeHeadlessRerunVisualizer() {
                                                                : "false")
             << ", factor_graph_inspector_stride="
             << headless_rerun_factor_graph_inspector_stride_
+            << ", factor_graph_inspector_topology="
+            << (headless_rerun_factor_graph_inspector_topology_enable_
+                    ? "true"
+                    : "false")
             << ", include_smart_factors="
             << (headless_rerun_factor_graph_inspector_include_smart_factors_
                     ? "true"
@@ -1176,6 +1188,8 @@ void KimeraVioRos::publishHeadlessBackendOutput(
     publishHeadlessOdometry(output);
     odometry_publish_time_sec = elapsedSec(odometry_publish_start_time);
     publishHeadlessLandmarks(output);
+  }
+  if (headless_rerun_visualizer_) {
     const auto rerun_publish_start_time = VIO::utils::Timer::tic();
     publishHeadlessRerunBackendOutput(output);
     rerun_publish_time_sec = elapsedSec(rerun_publish_start_time);
@@ -1527,16 +1541,60 @@ void KimeraVioRos::publishKimeraFactorGraphInspector(
 
   const auto& graph = output->factor_graph_;
   const auto& state = output->state_;
+
+  // Kimera publishes W_State_Blkf_, which normally uses the chained
+  // incremental pose (unless --no_incremental_pose is set).  The poses in
+  // state_ are the current optimizer solution and can undergo large gauge
+  // corrections between backend updates.  Drawing successive state_ poses as
+  // a history therefore creates jumps which do not exist in the published
+  // odometry.  At each snapshot, rigidly place the complete active optimizer
+  // graph so its current x key coincides with the published pose.  This keeps
+  // all factors internally exact while making the active lag window follow
+  // the same smooth trajectory presented elsewhere in Rerun.
+  gtsam::Pose3 display_T_state;
+  bool display_T_state_valid = false;
+  const gtsam::Key current_pose_key =
+      gtsam::Symbol(kPoseSymbolChar, output->cur_kf_id_);
+  if (state.exists(current_pose_key)) {
+    const gtsam::Pose3 state_current_pose =
+        state.at<gtsam::Pose3>(current_pose_key);
+    display_T_state =
+        output->W_State_Blkf_.pose_.compose(state_current_pose.inverse());
+    display_T_state_valid = true;
+  }
+
   std::map<uint64_t, std::pair<gtsam::Key, gtsam::Pose3>> active_poses;
   for (const auto& key_value : state) {
     const gtsam::Symbol symbol(key_value.key);
     if (symbol.chr() != kPoseSymbolChar) {
       continue;
     }
+    const gtsam::Pose3 state_pose =
+        state.at<gtsam::Pose3>(key_value.key);
     active_poses.emplace(
         symbol.index(),
-        std::make_pair(key_value.key,
-                       state.at<gtsam::Pose3>(key_value.key)));
+        std::make_pair(
+            key_value.key,
+            display_T_state_valid ? display_T_state.compose(state_pose)
+                                  : state_pose));
+  }
+
+  // Use the exact pose exported as Kimera odometry for the persistent history.
+  // The active graph above has been placed into this same display frame.
+  if (!active_poses.empty()) {
+    const uint64_t latest_pose_index = active_poses.rbegin()->first;
+    if (headless_rerun_factor_graph_last_pose_index_valid_ &&
+        latest_pose_index < headless_rerun_factor_graph_last_pose_index_) {
+      headless_rerun_factor_graph_trajectory_.clear();
+      headless_rerun_factor_graph_last_pose_index_valid_ = false;
+    }
+    if (!headless_rerun_factor_graph_last_pose_index_valid_ ||
+        latest_pose_index != headless_rerun_factor_graph_last_pose_index_) {
+      headless_rerun_factor_graph_trajectory_.push_back(
+          output->W_State_Blkf_.pose_);
+      headless_rerun_factor_graph_last_pose_index_ = latest_pose_index;
+      headless_rerun_factor_graph_last_pose_index_valid_ = true;
+    }
   }
 
   uint64_t minimum_key_index = std::numeric_limits<uint64_t>::max();
@@ -1696,19 +1754,9 @@ void KimeraVioRos::publishKimeraFactorGraphInspector(
           centroid /= static_cast<double>(endpoint_positions.size());
           centroid.z() += 0.4;
           spatial_factor_markers[kind].push_back(centroid);
-          spatial_factor_marker_labels[kind].push_back(label);
-
-          RerunLineStrip3D strip;
-          strip.label = label;
-          strip.points.reserve(endpoint_positions.size());
-          for (const auto& index_position : endpoint_positions) {
-            gtsam::Point3 endpoint = index_position.second;
-            endpoint.z() += 0.4;
-            strip.points.push_back(endpoint);
-          }
-          if (strip.points.size() > 1u) {
-            spatial_factor_edges[kind].push_back(std::move(strip));
-          }
+          spatial_factor_marker_labels[kind].push_back(
+              label + " | " + std::to_string(endpoint_positions.size()) +
+              " active poses");
           return;
         }
 
@@ -1917,24 +1965,17 @@ void KimeraVioRos::publishKimeraFactorGraphInspector(
                     true);
   }
 
-  headless_rerun_visualizer_->drawGraph(
-      "kimera/factor_graph_inspector/topology", nodes, edges, false);
+  if (headless_rerun_factor_graph_inspector_topology_enable_) {
+    headless_rerun_visualizer_->drawGraph(
+        "kimera/factor_graph_inspector/topology", nodes, edges, false);
+  }
 
   const std::string spatial_path =
       "kimera/factor_graph_inspector/spatial/";
-  if (headless_rerun_trajectory_.size() > 1u) {
-    const size_t context_pose_limit =
-        std::max<size_t>(2u, 2u * active_poses.size());
-    const auto context_begin = headless_rerun_trajectory_.begin() +
-        static_cast<std::ptrdiff_t>(
-            headless_rerun_trajectory_.size() > context_pose_limit
-                ? headless_rerun_trajectory_.size() - context_pose_limit
-                : 0u);
-    const std::vector<gtsam::Pose3> context_trajectory(
-        context_begin, headless_rerun_trajectory_.end());
+  if (headless_rerun_factor_graph_trajectory_.size() > 1u) {
     headless_rerun_visualizer_->drawTrajectory(
-        spatial_path + "context/trajectory_history",
-        context_trajectory,
+        spatial_path + "context_trajectory",
+        headless_rerun_factor_graph_trajectory_,
         Eigen::Vector4f(170.f, 176.f, 186.f, 150.f),
         2.0f);
   }
@@ -2034,8 +2075,11 @@ void KimeraVioRos::publishKimeraFactorGraphInspector(
   const auto& merge = output->cbs_pose_merge_diagnostic_;
   if (merge.valid && state.exists(merge.from_pose_key) &&
       state.exists(merge.to_pose_key)) {
-    const gtsam::Pose3 anchor =
+    const gtsam::Pose3 state_anchor =
         state.at<gtsam::Pose3>(merge.from_pose_key);
+    const gtsam::Pose3 anchor =
+        display_T_state_valid ? display_T_state.compose(state_anchor)
+                              : state_anchor;
     const gtsam::Pose3 local_pose =
         anchor.compose(merge.local_relative_before);
     const gtsam::Pose3 external_pose =
@@ -2161,7 +2205,7 @@ void KimeraVioRos::publishKimeraFactorGraphInspector(
                            Eigen::Vector4f(155.f, 89.f, 182.f, 150.f),
                            1.5f,
                            8.0f,
-                           false);
+                           true);
   draw_spatial_factor_kind(KimeraFactorGraphKind::kPrior,
                            "priors",
                            Eigen::Vector4f(210.f, 215.f, 220.f, 240.f),
@@ -2217,7 +2261,8 @@ void KimeraVioRos::publishKimeraFactorGraphInspector(
   draw_count("visualized_nodes", nodes.size());
   draw_count("visualized_edges", edges.size());
   draw_count("spatial_pose_nodes", active_pose_points.size());
-  draw_count("trajectory_history_poses", headless_rerun_trajectory_.size());
+  draw_count("trajectory_history_poses",
+             headless_rerun_factor_graph_trajectory_.size());
   draw_count("spatial_imu_edges",
              spatial_factor_edges[KimeraFactorGraphKind::kImu].size());
   draw_count(

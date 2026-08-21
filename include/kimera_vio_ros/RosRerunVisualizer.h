@@ -89,6 +89,9 @@ class RosRerunVisualizer {
   void drawImage(const std::string& entity_path,
                  const cv::Mat& image,
                  bool is_static = false);
+  void drawEncodedImage(const std::string& entity_path,
+                        const std::vector<uint8_t>& image,
+                        const std::string& media_type);
 
  private:
   class Impl;

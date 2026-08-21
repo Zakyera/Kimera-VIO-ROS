@@ -1,0 +1,144 @@
+<launch>
+  <arg name="ground_truth_path"
+       default="/workspace/cbs_gtsam4.3/src/datasets/newer/2021-ouster-os0-128-alphasense/collection 3 - maths institute/ground_truth/gt_state_easy.csv"/>
+  <arg name="bag_duration" default="216.0"/>
+  <arg name="rerun_host"
+       default="rerun+http://172.17.0.1:9876/proxy"/>
+  <arg name="rerun_recording_id"
+       default="newer_college_maths_easy_original"/>
+  <arg name="estimator_odom_topic" default="/glim_ros/odom"/>
+  <arg name="estimator_entity_prefix" default="glim"/>
+  <arg name="estimator_frame_name" default="base"/>
+  <!--
+    Pose right-composition converts the selected estimator body origin to the
+    Oxford Base origin.  Defaults preserve the original GLIM os_imu -> Base
+    behavior; standalone Kimera passes the calibrated as_imu -> Base inverse.
+  -->
+  <arg name="estimator_pose_right_compose_enable" default="true"/>
+  <arg name="estimator_pose_right_compose_x" default="0.013"/>
+  <arg name="estimator_pose_right_compose_y" default="-0.012"/>
+  <arg name="estimator_pose_right_compose_z" default="-0.106"/>
+  <arg name="estimator_pose_right_compose_qx" default="0.0"/>
+  <arg name="estimator_pose_right_compose_qy" default="0.0"/>
+  <arg name="estimator_pose_right_compose_qz" default="0.0"/>
+  <arg name="estimator_pose_right_compose_qw" default="1.0"/>
+  <arg name="image_stream_enable" default="false"/>
+  <arg name="image_topic"
+       default="/alphasense_driver_ros/cam1/compressed"/>
+  <arg name="image_entity_path" default="video/left/image"/>
+  <arg name="right_image_stream_enable" default="false"/>
+  <arg name="right_image_topic"
+       default="/alphasense_driver_ros/cam0/compressed"/>
+  <arg name="right_image_entity_path" default="video/right/image"/>
+  <arg name="image_max_hz" default="5.0"/>
+  <arg name="point_clouds_enable" default="false"/>
+  <arg name="current_scan_topic" default="/glim_ros/points"/>
+  <arg name="ground_truth_timestamp_offset_sec" default="0.05"/>
+
+  <node pkg="kimera_vio_ros"
+        type="rerun_topic_visualizer_node"
+        name="newer_college_stock_rerun_topic_visualizer"
+        output="screen">
+    <param name="rerun_host" value="$(arg rerun_host)"/>
+    <param name="rerun_recording_id" value="$(arg rerun_recording_id)"/>
+    <param name="publish_rate_hz" value="10.0"/>
+    <param name="world_alignment_enable" value="true"/>
+    <param name="max_trajectory_len" value="10000"/>
+
+    <param name="liorf_odom_topic" value="$(arg estimator_odom_topic)"/>
+    <param name="secondary_entity_prefix"
+           value="$(arg estimator_entity_prefix)"/>
+    <param name="secondary_frame_name" value="$(arg estimator_frame_name)"/>
+    <param name="secondary_pose_right_compose_enable"
+           value="$(arg estimator_pose_right_compose_enable)"/>
+    <rosparam param="secondary_pose_right_compose" subst_value="true">
+      [$(arg estimator_pose_right_compose_x),
+       $(arg estimator_pose_right_compose_y),
+       $(arg estimator_pose_right_compose_z),
+       $(arg estimator_pose_right_compose_qx),
+       $(arg estimator_pose_right_compose_qy),
+       $(arg estimator_pose_right_compose_qz),
+       $(arg estimator_pose_right_compose_qw)]
+    </rosparam>
+    <param name="secondary_uncertainty_scale" value="1.25"/>
+
+    <param name="kimera_odom_topic" value="/newer_college/unused_odom"/>
+    <param name="publish_raw_kimera_enable" value="false"/>
+    <param name="publish_secondary_enable" value="false"/>
+    <param name="publish_aligned_kimera_enable" value="false"/>
+    <param name="kimera_landmarks_enable" value="false"/>
+
+    <param name="liorf_point_clouds_enable"
+           value="$(arg point_clouds_enable)"/>
+    <param name="liorf_local_map_enable" value="false"/>
+    <param name="liorf_current_scan_enable"
+           value="$(arg point_clouds_enable)"/>
+    <param name="liorf_current_scan_topic"
+           value="$(arg current_scan_topic)"/>
+    <param name="liorf_current_scan_max_points" value="20000"/>
+    <param name="secondary_point_cloud_common_alignment_enable" value="true"/>
+    <param name="secondary_point_cloud_publish_raw_enable" value="false"/>
+
+    <param name="image_stream_enable" value="$(arg image_stream_enable)"/>
+    <param name="image_topic" value="$(arg image_topic)"/>
+    <param name="image_entity_path" value="$(arg image_entity_path)"/>
+    <param name="image_max_hz" value="$(arg image_max_hz)"/>
+    <param name="image_queue_size" value="5"/>
+    <param name="cbs_metrics_enable" value="false"/>
+    <param name="accumulated_covariance_enable" value="false"/>
+    <param name="lag_scalars_enable" value="false"/>
+
+    <param name="ground_truth_enable" value="true"/>
+    <param name="publish_common_aligned_overlay_enable" value="true"/>
+    <param name="anchor_common_aligned_start_enable" value="false"/>
+    <param name="common_aligned_provisional_start_enable" value="false"/>
+    <param name="freeze_common_aligned_overlay_alignment_enable" value="false"/>
+    <param name="ground_truth_alignment_gravity_preserving_enable" value="true"/>
+    <param name="ground_truth_path" value="$(arg ground_truth_path)"/>
+    <param name="ground_truth_timestamp_offset_sec"
+           value="$(arg ground_truth_timestamp_offset_sec)"/>
+    <param name="ground_truth_max_timestamp_diff_sec" value="0.051"/>
+    <param name="ground_truth_alignment_min_pairs" value="20"/>
+    <param name="ground_truth_alignment_min_path_length_m" value="5.0"/>
+    <param name="ground_truth_window_duration_sec" value="$(arg bag_duration)"/>
+    <param name="odometry_queue_size" value="2000"/>
+    <param name="standalone_glim_dashboard_blueprint_enable" value="true"/>
+  </node>
+
+  <!--
+    A second visualizer process is used only as a compressed-image bridge.  Rerun
+    merges it into the same recording via rerun_recording_id.  Keeping this
+    separate avoids changing either GLIM or the estimator-facing visualizer.
+  -->
+  <node if="$(arg right_image_stream_enable)"
+        pkg="kimera_vio_ros"
+        type="rerun_topic_visualizer_node"
+        name="newer_college_stock_rerun_right_video"
+        output="screen">
+    <param name="rerun_host" value="$(arg rerun_host)"/>
+    <param name="rerun_recording_id" value="$(arg rerun_recording_id)"/>
+    <param name="publish_rate_hz" value="10.0"/>
+
+    <param name="world_alignment_enable" value="false"/>
+    <param name="liorf_odom_topic" value="/newer_college/unused_right_video_liorf_odom"/>
+    <param name="kimera_odom_topic" value="/newer_college/unused_right_video_kimera_odom"/>
+    <param name="publish_raw_kimera_enable" value="false"/>
+    <param name="publish_secondary_enable" value="false"/>
+    <param name="publish_aligned_kimera_enable" value="false"/>
+    <param name="liorf_point_clouds_enable" value="false"/>
+    <param name="kimera_landmarks_enable" value="false"/>
+
+    <param name="image_stream_enable" value="true"/>
+    <param name="image_topic" value="$(arg right_image_topic)"/>
+    <param name="image_entity_path" value="$(arg right_image_entity_path)"/>
+    <param name="image_max_hz" value="$(arg image_max_hz)"/>
+    <param name="image_queue_size" value="5"/>
+
+    <param name="cbs_metrics_enable" value="false"/>
+    <param name="accumulated_covariance_enable" value="false"/>
+    <param name="lag_scalars_enable" value="false"/>
+    <param name="ground_truth_enable" value="false"/>
+    <param name="publish_common_aligned_overlay_enable" value="false"/>
+    <param name="raw_cbs_dashboard_blueprint_enable" value="false"/>
+  </node>
+</launch>

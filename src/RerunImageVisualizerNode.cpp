@@ -96,19 +96,16 @@ class RerunImageVisualizer {
     }
 
     const std::vector<uint8_t> encoded(msg->data.begin(), msg->data.end());
-    const cv::Mat image = cv::imdecode(encoded, cv::IMREAD_COLOR);
-    if (image.empty()) {
-      LOG(WARNING) << "Could not decode compressed Rerun image from topic "
-                   << image_topic_ << ".";
-      return;
-    }
+    const std::string media_type =
+        msg->format.find("png") != std::string::npos ? "image/png"
+                                                      : "image/jpeg";
 
     const double interval_sec =
         std::isfinite(last_published_stamp_sec_)
             ? stamp_sec - last_published_stamp_sec_
             : std::numeric_limits<double>::quiet_NaN();
     visualizer_->setTimeNSec(stampToNSec(msg->header.stamp));
-    visualizer_->drawImage(image_entity_path_, image, false);
+    visualizer_->drawEncodedImage(image_entity_path_, encoded, media_type);
     ++published_count_;
     visualizer_->drawScalar("video/metadata/live_image_count",
                             static_cast<double>(published_count_));

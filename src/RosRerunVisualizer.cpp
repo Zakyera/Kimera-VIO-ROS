@@ -27,7 +27,9 @@ class RosRerunVisualizer::Impl {
        const std::string& recording_id,
        const std::string& host)
       : visualizer_(aria::viz::VisualizerRerun::Params(
-            app_id, recording_id, host)) {}
+            app_id, recording_id, host)) {
+    visualizer_.rec()->send_recording_name(recording_id);
+  }
 
   aria::viz::VisualizerRerun visualizer_;
 };
@@ -155,8 +157,14 @@ void RosRerunVisualizer::drawLineStrips(
     const Eigen::Vector4f& rgba,
     const float line_width_ui_points,
     const bool show_labels) {
+  // rerun::components::LineStrip3D keeps a view of the supplied point
+  // collection until rec()->log() serializes it.  Building it from a local
+  // vector inside the loop leaves every component pointing at freed storage.
+  // Keep all point buffers alive until after the log call.
+  std::vector<std::vector<rerun::datatypes::Vec3D>> point_storage;
   std::vector<rerun::components::LineStrip3D> rerun_strips;
   std::vector<rerun::components::Text> rerun_labels;
+  point_storage.reserve(strips.size());
   rerun_strips.reserve(strips.size());
   rerun_labels.reserve(strips.size());
 
@@ -164,15 +172,18 @@ void RosRerunVisualizer::drawLineStrips(
     if (strip.points.size() < 2u) {
       continue;
     }
-    std::vector<rerun::datatypes::Vec3D> points;
+    auto& points = point_storage.emplace_back();
     points.reserve(strip.points.size());
     for (const auto& point : strip.points) {
       points.emplace_back(static_cast<float>(point.x()),
                           static_cast<float>(point.y()),
                           static_cast<float>(point.z()));
     }
-    rerun_strips.emplace_back(points);
     rerun_labels.emplace_back(strip.label);
+  }
+
+  for (const auto& points : point_storage) {
+    rerun_strips.emplace_back(points);
   }
 
   if (rerun_strips.empty()) {
@@ -222,6 +233,16 @@ void RosRerunVisualizer::drawImage(const std::string& entity_path,
                                    const cv::Mat& image,
                                    const bool is_static) {
   impl_->visualizer_.drawImage(entity_path, image, is_static);
+}
+
+void RosRerunVisualizer::drawEncodedImage(
+    const std::string& entity_path,
+    const std::vector<uint8_t>& image,
+    const std::string& media_type) {
+  impl_->visualizer_.rec()->log(
+      entity_path,
+      rerun::EncodedImage::from_bytes(
+          image, rerun::components::MediaType(media_type)));
 }
 
 }  // namespace VIO

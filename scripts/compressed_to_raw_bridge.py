@@ -13,19 +13,35 @@ class CompressedToRawBridge:
     input_topic = rospy.get_param("~input_topic", "/camera/image/compressed")
     output_topic = rospy.get_param("~output_topic", "/camera/image_raw")
     queue_size = int(rospy.get_param("~queue_size", 10))
+    self.skip_initial_frames = max(
+        0, int(rospy.get_param("~skip_initial_frames", 0))
+    )
+    self.received_frames = 0
 
     self.pub = rospy.Publisher(output_topic, Image, queue_size=queue_size)
     self.sub = rospy.Subscriber(
         input_topic, CompressedImage, self.callback, queue_size=queue_size
     )
     rospy.loginfo(
-        "compressed_to_raw_bridge active: in='%s' out='%s' encoding='%s'",
+        "compressed_to_raw_bridge active: in='%s' out='%s' encoding='%s' "
+        "skip_initial_frames=%d",
         input_topic,
         output_topic,
         self.output_encoding,
+        self.skip_initial_frames,
     )
 
   def callback(self, msg):
+    frame_index = self.received_frames
+    self.received_frames += 1
+    if frame_index < self.skip_initial_frames:
+      rospy.loginfo(
+          "compressed_to_raw_bridge skipped startup frame %d/%d at %.9f",
+          frame_index + 1,
+          self.skip_initial_frames,
+          msg.header.stamp.to_sec(),
+      )
+      return
     try:
       cv_img = self.bridge.compressed_imgmsg_to_cv2(
           msg, desired_encoding="passthrough"

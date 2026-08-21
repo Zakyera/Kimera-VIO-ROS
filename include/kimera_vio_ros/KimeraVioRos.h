@@ -142,6 +142,7 @@ class KimeraVioRos {
   bool headless_rerun_geometry_enable_ = true;
   bool headless_rerun_factor_graph_enable_ = true;
   bool headless_rerun_factor_graph_inspector_enable_ = false;
+  bool headless_rerun_factor_graph_inspector_topology_enable_ = true;
   int headless_rerun_factor_graph_inspector_stride_ = 5;
   bool headless_rerun_factor_graph_inspector_include_smart_factors_ = false;
   int headless_rerun_factor_graph_inspector_max_smart_factors_ = 1000;
@@ -160,6 +161,9 @@ class KimeraVioRos {
   std::unique_ptr<RosRerunVisualizer> headless_rerun_visualizer_;
   std::vector<gtsam::Pose3> headless_rerun_trajectory_;
   int64_t headless_rerun_last_kf_id_ = -1;
+  std::vector<gtsam::Pose3> headless_rerun_factor_graph_trajectory_;
+  uint64_t headless_rerun_factor_graph_last_pose_index_ = 0u;
+  bool headless_rerun_factor_graph_last_pose_index_valid_ = false;
   ros::Publisher headless_odometry_pub_;
   ros::Publisher headless_landmarks_pub_;
   ros::Publisher pose_odom_belief_out_pub_;

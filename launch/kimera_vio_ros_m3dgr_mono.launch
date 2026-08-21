@@ -43,6 +43,7 @@
   <arg name="rerun_geometry_enable" default="true"/>
   <arg name="rerun_factor_graph_enable" default="true"/>
   <arg name="rerun_factor_graph_inspector_enable" default="false"/>
+  <arg name="rerun_factor_graph_inspector_topology_enable" default="true"/>
   <arg name="rerun_factor_graph_inspector_stride" default="5"/>
   <arg name="rerun_factor_graph_inspector_include_smart_factors"
        default="false"/>
