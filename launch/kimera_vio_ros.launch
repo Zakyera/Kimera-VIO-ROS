@@ -80,6 +80,7 @@ file and include this one to launch KimeraVIO on the dataset of your choice -->
   <arg name="cbs_active_factor_detail_diagnostic_enable" default="false"/>
   <arg name="cbs_active_factor_detail_max_rows_per_update" default="1000"/>
   <arg name="cbs_covariance_exchange_audit_max_samples" default="0"/>
+  <arg name="cbs_covariance_exchange_audit_stride" default="1"/>
   <arg name="kimera_factor_graph_audit_enable" default="false"/>
   <arg name="kimera_shadow_acceptance_audit_enable" default="false"/>
   <arg name="cbs_temporary_linear_already_applied_gate_enable" default="true"/>
@@ -280,6 +281,7 @@ file and include this one to launch KimeraVIO on the dataset of your choice -->
               --cbs_active_factor_detail_diagnostic_enable=$(arg cbs_active_factor_detail_diagnostic_enable)
               --cbs_active_factor_detail_max_rows_per_update=$(arg cbs_active_factor_detail_max_rows_per_update)
               --cbs_covariance_exchange_audit_max_samples=$(arg cbs_covariance_exchange_audit_max_samples)
+              --cbs_covariance_exchange_audit_stride=$(arg cbs_covariance_exchange_audit_stride)
               --kimera_factor_graph_audit_enable=$(arg kimera_factor_graph_audit_enable)
               --kimera_shadow_acceptance_audit_enable=$(arg kimera_shadow_acceptance_audit_enable)
               --cbs_temporary_linear_already_applied_gate_enable=$(arg cbs_temporary_linear_already_applied_gate_enable)
