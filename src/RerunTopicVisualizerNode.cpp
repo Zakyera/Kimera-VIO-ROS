@@ -1565,11 +1565,235 @@ class RerunTopicVisualizer {
     (void)blueprint_stream_->flush_blocking(2.0f);
   }
 
+  void publishDualKimeraDashboardBlueprint() {
+    if (!dual_kimera_dashboard_blueprint_enable_ || !blueprint_stream_) {
+      return;
+    }
+
+    logBlueprintView(
+        blueprint_stream_.get(),
+        "dual_kimera_cam4_graph", "3D",
+        "Kimera cam4 (healthy) - live fixed-lag factor graph",
+        "/kimera_cam4/factor_graph_inspector/spatial",
+        {"+ /kimera_cam4/factor_graph_inspector/spatial/**",
+         "- /__properties/**"});
+    logBlueprintView(
+        blueprint_stream_.get(),
+        "dual_kimera_cam0_graph", "3D",
+        "Kimera cam0 (weak) - live fixed-lag factor graph",
+        "/kimera_cam0/factor_graph_inspector/spatial",
+        {"+ /kimera_cam0/factor_graph_inspector/spatial/**",
+         "- /__properties/**"});
+    logBlueprintView(blueprint_stream_.get(),
+                     "dual_kimera_trajectories", "3D",
+                     "Ground truth vs cam4 vs cam0 vs EKF", "/aligned",
+                     {"+ /aligned/ground_truth/**",
+                      "+ /aligned/cam4/**",
+                      "+ /aligned/kimera/**",
+                      "+ /aligned/ekf/**",
+                      "- /aligned/metadata/**",
+                      "- /__properties/**"});
+    logBlueprintView(blueprint_stream_.get(),
+                     "dual_kimera_cam4_video", "2D",
+                     "Physical cam4 video (healthy estimator)",
+                     "/video/cam4",
+                     {"+ /video/cam4/**", "- /__properties/**"});
+    logBlueprintView(blueprint_stream_.get(),
+                     "dual_kimera_cam0_video", "2D",
+                     "Physical cam0 video (weak estimator)",
+                     "/video/cam0",
+                     {"+ /video/cam0/**", "- /__properties/**"});
+    const std::string cam4_graph =
+        blueprintViewPath("dual_kimera_cam4_graph");
+    const std::string cam0_graph =
+        blueprintViewPath("dual_kimera_cam0_graph");
+    const std::string trajectories =
+        blueprintViewPath("dual_kimera_trajectories");
+    const std::string cam4_video =
+        blueprintViewPath("dual_kimera_cam4_video");
+    const std::string cam0_video =
+        blueprintViewPath("dual_kimera_cam0_video");
+    logBlueprintContainer(
+        blueprint_stream_.get(),
+        "dual_kimera_top",
+        rerun::blueprint::components::ContainerKind::Horizontal,
+        "Live estimators and aligned trajectories",
+        {cam4_graph, cam0_graph, trajectories},
+        {1.0f, 1.0f, 1.25f});
+    logBlueprintContainer(
+        blueprint_stream_.get(),
+        "dual_kimera_bottom",
+        rerun::blueprint::components::ContainerKind::Horizontal,
+        "Synchronized camera streams",
+        {cam4_video, cam0_video},
+        {1.0f, 1.0f});
+
+    const std::string top = blueprintContainerPath("dual_kimera_top");
+    const std::string bottom = blueprintContainerPath("dual_kimera_bottom");
+    logBlueprintContainer(
+        blueprint_stream_.get(),
+        "dual_kimera_root",
+        rerun::blueprint::components::ContainerKind::Vertical,
+        "Dual Kimera CBS - Newer College Maths-Easy",
+        {top, bottom}, {}, {1.7f, 1.0f});
+
+    blueprint_stream_->set_time_sequence("blueprint", 0);
+    blueprint_stream_->log(
+        "viewport",
+        rerun::blueprint::archetypes::ViewportBlueprint()
+            .with_root_container(rerun::blueprint::components::RootContainer(
+                makeDeterministicUuid("container:dual_kimera_root")))
+            .with_auto_layout(rerun::blueprint::components::AutoLayout(false))
+            .with_auto_views(rerun::blueprint::components::AutoViews(false)));
+    blueprint_stream_->log(
+        "time_panel",
+        rerun::blueprint::archetypes::TimePanelBlueprint()
+            .with_play_state(
+                rerun::blueprint::components::PlayState::Following)
+            .with_loop_mode(rerun::blueprint::components::LoopMode::Off));
+    (void)blueprint_stream_->flush_blocking(2.0f);
+  }
+
+  void publishGrandTourThreeSensorDashboardBlueprint() {
+    if (!grandtour_three_sensor_dashboard_blueprint_enable_ ||
+        !blueprint_stream_) {
+      return;
+    }
+
+    logBlueprintView(
+        blueprint_stream_.get(),
+        "grandtour_hesai_graph", "3D",
+        "Hesai GLIM - live fixed-lag factor graph",
+        "/hesai_glim/factor_graph_inspector/spatial",
+        {"+ /hesai_glim/factor_graph_inspector/spatial/**",
+         "- /__properties/**"});
+    logBlueprintView(
+        blueprint_stream_.get(),
+        "grandtour_livox_graph", "3D",
+        "Livox GLIM - live fixed-lag factor graph",
+        "/livox_glim/factor_graph_inspector/spatial",
+        {"+ /livox_glim/factor_graph_inspector/spatial/**",
+         "- /__properties/**"});
+    logBlueprintView(
+        blueprint_stream_.get(),
+        "grandtour_kimera_graph", "3D",
+        "Alphasense stereo Kimera - live fixed-lag factor graph",
+        "/kimera/factor_graph_inspector/spatial",
+        {"+ /kimera/factor_graph_inspector/spatial/**",
+         "- /__properties/**"});
+    logBlueprintView(
+        blueprint_stream_.get(),
+        "grandtour_three_sensor_trajectories", "3D",
+        "GT vs Hesai GLIM vs Livox GLIM vs Kimera vs EKF", "/aligned",
+        {"+ /aligned/ground_truth/**",
+         "+ /aligned/hesai/**",
+         "+ /aligned/livox/**",
+         "+ /aligned/kimera/**",
+         "+ /aligned/ekf/**",
+         "- /aligned/metadata/**",
+         "- /__properties/**"});
+    logBlueprintView(
+        blueprint_stream_.get(),
+        "grandtour_front_left_video", "2D", "Alphasense front-left video",
+        "/video/front_left",
+        {"+ /video/front_left/**", "- /__properties/**"});
+    logBlueprintView(
+        blueprint_stream_.get(),
+        "grandtour_front_right_video", "2D", "Alphasense front-right video",
+        "/video/front_right",
+        {"+ /video/front_right/**", "- /__properties/**"});
+
+    const std::vector<std::pair<std::string, std::string>> routes = {
+        {"h2l", "Hesai to Livox"},
+        {"h2k", "Hesai to Kimera"},
+        {"l2h", "Livox to Hesai"},
+        {"l2k", "Livox to Kimera"},
+        {"k2h", "Kimera to Hesai"},
+        {"k2l", "Kimera to Livox"}};
+    std::vector<std::string> route_views;
+    route_views.reserve(routes.size());
+    for (const auto& route : routes) {
+      const std::string view_name = "grandtour_cbs_" + route.first;
+      logBlueprintView(
+          blueprint_stream_.get(), view_name, "TimeSeries",
+          "CBS " + route.second,
+          "/cbs/full_mesh/" + route.first,
+          {"+ /cbs/full_mesh/" + route.first + "/**",
+           "- /__properties/**"});
+      route_views.push_back(blueprintViewPath(view_name));
+    }
+
+    const std::string hesai_graph = blueprintViewPath("grandtour_hesai_graph");
+    const std::string livox_graph = blueprintViewPath("grandtour_livox_graph");
+    const std::string kimera_graph =
+        blueprintViewPath("grandtour_kimera_graph");
+    const std::string trajectories =
+        blueprintViewPath("grandtour_three_sensor_trajectories");
+    const std::string left_video =
+        blueprintViewPath("grandtour_front_left_video");
+    const std::string right_video =
+        blueprintViewPath("grandtour_front_right_video");
+
+    logBlueprintContainer(
+        blueprint_stream_.get(), "grandtour_three_sensor_graphs",
+        rerun::blueprint::components::ContainerKind::Horizontal,
+        "Three live estimators and aligned trajectories",
+        {hesai_graph, livox_graph, kimera_graph, trajectories},
+        {1.0f, 1.0f, 1.0f, 1.35f});
+    logBlueprintContainer(
+        blueprint_stream_.get(), "grandtour_three_sensor_videos",
+        rerun::blueprint::components::ContainerKind::Horizontal,
+        "Synchronized Alphasense stereo streams",
+        {left_video, right_video}, {1.0f, 1.0f});
+    logBlueprintContainer(
+        blueprint_stream_.get(), "grandtour_three_sensor_routes_a",
+        rerun::blueprint::components::ContainerKind::Horizontal,
+        "CBS full mesh - Hesai and Livox",
+        {route_views[0], route_views[1], route_views[2]},
+        {1.0f, 1.0f, 1.0f});
+    logBlueprintContainer(
+        blueprint_stream_.get(), "grandtour_three_sensor_routes_b",
+        rerun::blueprint::components::ContainerKind::Horizontal,
+        "CBS full mesh - Livox and Kimera",
+        {route_views[3], route_views[4], route_views[5]},
+        {1.0f, 1.0f, 1.0f});
+
+    const std::string graphs =
+        blueprintContainerPath("grandtour_three_sensor_graphs");
+    const std::string videos =
+        blueprintContainerPath("grandtour_three_sensor_videos");
+    const std::string routes_a =
+        blueprintContainerPath("grandtour_three_sensor_routes_a");
+    const std::string routes_b =
+        blueprintContainerPath("grandtour_three_sensor_routes_b");
+    logBlueprintContainer(
+        blueprint_stream_.get(), "grandtour_three_sensor_root",
+        rerun::blueprint::components::ContainerKind::Vertical,
+        "GrandTour ETH-1 - full-mesh three-sensor CBS",
+        {graphs, videos, routes_a, routes_b}, {}, {1.6f, 1.0f, 0.8f, 0.8f});
+
+    blueprint_stream_->set_time_sequence("blueprint", 0);
+    blueprint_stream_->log(
+        "viewport",
+        rerun::blueprint::archetypes::ViewportBlueprint()
+            .with_root_container(rerun::blueprint::components::RootContainer(
+                makeDeterministicUuid("container:grandtour_three_sensor_root")))
+            .with_auto_layout(rerun::blueprint::components::AutoLayout(false))
+            .with_auto_views(rerun::blueprint::components::AutoViews(false)));
+    blueprint_stream_->log(
+        "time_panel",
+        rerun::blueprint::archetypes::TimePanelBlueprint()
+            .with_play_state(rerun::blueprint::components::PlayState::Following)
+            .with_loop_mode(rerun::blueprint::components::LoopMode::Off));
+    (void)blueprint_stream_->flush_blocking(2.0f);
+  }
+
   RerunTopicVisualizer()
       : private_nh_("~"),
         tf_buffer_(),
         tf_listener_(tf_buffer_),
         kimera_("kimera"),
+        ekf_("ekf"),
         liorf_("liorf"),
         liorf_local_map_("liorf_local_map"),
         liorf_current_scan_("liorf_current_scan"),
@@ -1577,9 +1801,18 @@ class RerunTopicVisualizer {
         kimera_landmarks_("kimera_landmarks"),
         cbs_g2k_("glim_to_kimera", "cbs/g2k", "glim_sent"),
         cbs_k2g_("kimera_to_glim", "cbs/k2g", "kimera_sent"),
+        cbs_h2l_("hesai_to_livox", "cbs/full_mesh/h2l", "h2l_sent"),
+        cbs_h2k_("hesai_to_kimera", "cbs/full_mesh/h2k", "h2k_sent"),
+        cbs_l2h_("livox_to_hesai", "cbs/full_mesh/l2h", "l2h_sent"),
+        cbs_l2k_("livox_to_kimera", "cbs/full_mesh/l2k", "l2k_sent"),
+        cbs_k2h_("kimera_to_hesai", "cbs/full_mesh/k2h", "k2h_sent"),
+        cbs_k2l_("kimera_to_livox", "cbs/full_mesh/k2l", "k2l_sent"),
         visualizer_(nullptr) {
     private_nh_.param<std::string>(
         "kimera_odom_topic", kimera_odom_topic_, "/kimera_vio_ros/odometry");
+    private_nh_.param<bool>("ekf_enable", ekf_enable_, false);
+    private_nh_.param<std::string>(
+        "ekf_odom_topic", ekf_odom_topic_, "/cbs_ekf/odometry/filtered");
     private_nh_.param<std::string>(
         "liorf_odom_topic", liorf_odom_topic_, "/liorf/mapping/odometry");
     private_nh_.param<std::string>(
@@ -1628,6 +1861,8 @@ class RerunTopicVisualizer {
                             true);
     private_nh_.param<double>(
         "kimera_uncertainty_scale", kimera_uncertainty_scale_, 1.25);
+    private_nh_.param<double>(
+        "ekf_uncertainty_scale", ekf_uncertainty_scale_, 1.25);
     private_nh_.param<double>("secondary_uncertainty_scale",
                               secondary_uncertainty_scale_,
                               1.25);
@@ -1637,6 +1872,10 @@ class RerunTopicVisualizer {
     if (!std::isfinite(kimera_uncertainty_scale_) ||
         kimera_uncertainty_scale_ <= 0.0) {
       kimera_uncertainty_scale_ = 1.25;
+    }
+    if (!std::isfinite(ekf_uncertainty_scale_) ||
+        ekf_uncertainty_scale_ <= 0.0) {
+      ekf_uncertainty_scale_ = 1.25;
     }
     if (!std::isfinite(secondary_uncertainty_scale_) ||
         secondary_uncertainty_scale_ <= 0.0) {
@@ -1695,6 +1934,13 @@ class RerunTopicVisualizer {
         "kimera_landmarks_max_points", kimera_landmarks_max_points_, 3000);
     private_nh_.param<bool>(
         "cbs_metrics_enable", cbs_metrics_enable_, false);
+    private_nh_.param<bool>("cbs_full_mesh_metrics_enable",
+                            cbs_full_mesh_metrics_enable_,
+                            false);
+    private_nh_.param<std::string>(
+        "cbs_full_mesh_odom_belief_topic",
+        cbs_full_mesh_odom_belief_topic_,
+        "/cbs/full_mesh/odom_beliefs");
     private_nh_.param<bool>("accumulated_covariance_enable",
                             accumulated_covariance_enable_,
                             true);
@@ -1761,6 +2007,13 @@ class RerunTopicVisualizer {
     private_nh_.param<bool>("standalone_glim_dashboard_blueprint_enable",
                             standalone_glim_dashboard_blueprint_enable_,
                             false);
+    private_nh_.param<bool>("dual_kimera_dashboard_blueprint_enable",
+                            dual_kimera_dashboard_blueprint_enable_,
+                            false);
+    private_nh_.param<bool>(
+        "grandtour_three_sensor_dashboard_blueprint_enable",
+        grandtour_three_sensor_dashboard_blueprint_enable_,
+        false);
 
     if (!std::isfinite(publish_rate_hz_) || publish_rate_hz_ <= 0.0) {
       LOG(WARNING) << "Invalid publish_rate_hz=" << publish_rate_hz_
@@ -1790,13 +2043,19 @@ class RerunTopicVisualizer {
     visualizer_ = std::make_unique<RosRerunVisualizer>(
         "cbsms", recording_id_, rerun_host_);
     if (raw_cbs_dashboard_blueprint_enable_ ||
-        standalone_glim_dashboard_blueprint_enable_) {
+        dual_kimera_dashboard_blueprint_enable_ ||
+        standalone_glim_dashboard_blueprint_enable_ ||
+        grandtour_three_sensor_dashboard_blueprint_enable_) {
       blueprint_stream_ = std::make_unique<rerun::RecordingStream>(
           "cbsms", recording_id_, rerun::StoreKind::Blueprint);
       blueprint_stream_->connect_grpc(rerun_host_).exit_on_failure();
       blueprint_stream_->send_recording_name(recording_id_);
-      if (standalone_glim_dashboard_blueprint_enable_) {
+      if (grandtour_three_sensor_dashboard_blueprint_enable_) {
+        publishGrandTourThreeSensorDashboardBlueprint();
+      } else if (standalone_glim_dashboard_blueprint_enable_) {
         publishStandaloneGlimDashboardBlueprint();
+      } else if (dual_kimera_dashboard_blueprint_enable_) {
+        publishDualKimeraDashboardBlueprint();
       } else {
         publishRawCbsDashboardBlueprint();
       }
@@ -1819,6 +2078,14 @@ class RerunTopicVisualizer {
         &RerunTopicVisualizer::kimeraCallback,
         this,
         ros::TransportHints().tcpNoDelay());
+    if (ekf_enable_) {
+      ekf_sub_ = nh_.subscribe<nav_msgs::Odometry>(
+          ekf_odom_topic_,
+          odometry_queue_size_,
+          &RerunTopicVisualizer::ekfCallback,
+          this,
+          ros::TransportHints().tcpNoDelay());
+    }
     liorf_sub_ = nh_.subscribe<nav_msgs::Odometry>(
         liorf_odom_topic_,
         odometry_queue_size_,
@@ -1873,6 +2140,14 @@ class RerunTopicVisualizer {
           this,
           ros::TransportHints().tcpNoDelay());
     }
+    if (cbs_full_mesh_metrics_enable_) {
+      cbs_full_mesh_sub_ = nh_.subscribe<liorf::pose_odom_belief_array>(
+          cbs_full_mesh_odom_belief_topic_,
+          cbs_metrics_queue_size_,
+          &RerunTopicVisualizer::cbsFullMeshCallback,
+          this,
+          ros::TransportHints().tcpNoDelay());
+    }
     timer_ = nh_.createWallTimer(
         ros::WallDuration(1.0 / publish_rate_hz_),
         &RerunTopicVisualizer::publishLatest,
@@ -1881,6 +2156,8 @@ class RerunTopicVisualizer {
     LOG(INFO) << "Rerun topic visualizer enabled. recording_id='"
               << recording_id_ << "', host='" << rerun_host_
               << "', kimera_odom_topic='" << kimera_odom_topic_
+              << "', ekf_enable=" << (ekf_enable_ ? "true" : "false")
+              << ", ekf_odom_topic='" << ekf_odom_topic_
               << "', liorf_odom_topic='" << liorf_odom_topic_
               << "', secondary_entity_prefix='" << secondary_entity_prefix_
               << "', secondary_frame_name='" << secondary_frame_name_
@@ -1901,6 +2178,10 @@ class RerunTopicVisualizer {
               << (kimera_landmarks_enable_ ? "true" : "false")
               << ", cbs_metrics_enable="
               << (cbs_metrics_enable_ ? "true" : "false")
+              << ", cbs_full_mesh_metrics_enable="
+              << (cbs_full_mesh_metrics_enable_ ? "true" : "false")
+              << ", cbs_full_mesh_odom_belief_topic='"
+              << cbs_full_mesh_odom_belief_topic_ << "'"
               << ", accumulated_covariance_enable="
               << (accumulated_covariance_enable_ ? "true" : "false")
               << ", cbs_g2k_odom_belief_topic='"
@@ -1949,6 +2230,10 @@ class RerunTopicVisualizer {
     updateSource(msg, &kimera_);
   }
 
+  void ekfCallback(const nav_msgs::Odometry::ConstPtr& msg) {
+    updateSource(msg, &ekf_);
+  }
+
   void liorfCallback(const nav_msgs::Odometry::ConstPtr& msg) {
     if (!secondary_pose_right_compose_enable_) {
       updateSource(msg, &liorf_);
@@ -1991,6 +2276,40 @@ class RerunTopicVisualizer {
 
   void cbsK2gCallback(const liorf::pose_odom_belief_arrayConstPtr& msg) {
     updateBeliefTraffic(msg, &cbs_k2g_);
+  }
+
+  void cbsFullMeshCallback(
+      const liorf::pose_odom_belief_arrayConstPtr& msg) {
+    if (!msg) {
+      return;
+    }
+    liorf::pose_odom_belief_array hesai;
+    liorf::pose_odom_belief_array livox;
+    liorf::pose_odom_belief_array kimera;
+    hesai.header = msg->header;
+    livox.header = msg->header;
+    kimera.header = msg->header;
+    for (const auto& belief : msg->beliefs) {
+      if (belief.source_agent == static_cast<uint8_t>('h')) {
+        hesai.beliefs.push_back(belief);
+      } else if (belief.source_agent == static_cast<uint8_t>('l')) {
+        livox.beliefs.push_back(belief);
+      } else if (belief.source_agent == static_cast<uint8_t>('k')) {
+        kimera.beliefs.push_back(belief);
+      }
+    }
+    if (!hesai.beliefs.empty()) {
+      updateBeliefTraffic(hesai, &cbs_h2l_);
+      updateBeliefTraffic(hesai, &cbs_h2k_);
+    }
+    if (!livox.beliefs.empty()) {
+      updateBeliefTraffic(livox, &cbs_l2h_);
+      updateBeliefTraffic(livox, &cbs_l2k_);
+    }
+    if (!kimera.beliefs.empty()) {
+      updateBeliefTraffic(kimera, &cbs_k2h_);
+      updateBeliefTraffic(kimera, &cbs_k2l_);
+    }
   }
 
   void updateSource(const nav_msgs::Odometry::ConstPtr& msg,
@@ -2046,16 +2365,24 @@ class RerunTopicVisualizer {
     if (!msg || !state) {
       return;
     }
+    updateBeliefTraffic(*msg, state);
+  }
+
+  void updateBeliefTraffic(const liorf::pose_odom_belief_array& msg,
+                           BeliefTrafficState* state) {
+    if (!state) {
+      return;
+    }
 
     BeliefTrafficStats stats;
     std::vector<AccumulatedBeliefCovarianceSnapshot> covariance_snapshots;
     std::string entity;
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      stats = summarizeBeliefTraffic(*msg, state);
+      stats = summarizeBeliefTraffic(msg, state);
       if (accumulated_covariance_enable_) {
         appendAccumulatedBeliefCovarianceSnapshots(
-            *msg, &state->accumulated_covariance, &covariance_snapshots);
+            msg, &state->accumulated_covariance, &covariance_snapshots);
       }
       entity = state->entity;
     }
@@ -2340,19 +2667,27 @@ class RerunTopicVisualizer {
 
   void publishLatest(const ros::WallTimerEvent&) {
     nav_msgs::Odometry kimera_msg;
+    nav_msgs::Odometry ekf_msg;
     nav_msgs::Odometry liorf_msg;
     bool has_kimera = false;
+    bool has_ekf = false;
     bool has_liorf = false;
     double kimera_interval_sec = std::numeric_limits<double>::quiet_NaN();
+    double ekf_interval_sec = std::numeric_limits<double>::quiet_NaN();
     double liorf_interval_sec = std::numeric_limits<double>::quiet_NaN();
 
     {
       std::lock_guard<std::mutex> lock(mutex_);
       has_kimera = kimera_.has_latest;
+      has_ekf = ekf_.has_latest;
       has_liorf = liorf_.has_latest;
       if (has_kimera) {
         kimera_msg = kimera_.latest;
         kimera_interval_sec = kimera_.stamp_interval_sec;
+      }
+      if (has_ekf) {
+        ekf_msg = ekf_.latest;
+        ekf_interval_sec = ekf_.stamp_interval_sec;
       }
       if (has_liorf) {
         liorf_msg = liorf_.latest;
@@ -2361,14 +2696,42 @@ class RerunTopicVisualizer {
     }
 
     gtsam::Pose3 kimera_pose;
+    gtsam::Pose3 ekf_pose;
     gtsam::Pose3 liorf_pose;
     const bool kimera_pose_valid =
         has_kimera && odometryToPose(kimera_msg, &kimera_pose);
+    const bool ekf_pose_valid =
+        has_ekf && odometryToPose(ekf_msg, &ekf_pose);
     const bool liorf_pose_valid =
         has_liorf && odometryToPose(liorf_msg, &liorf_pose);
 
+    // Publishing the blueprint only in the constructor can race the creation of
+    // the recording store in the Rerun viewer.  Re-apply it once both Kimera
+    // streams are actually live so the viewer reliably selects our fixed
+    // two-factor-graphs + trajectory + two-videos presentation instead of its
+    // automatic grid.
+    if (dual_kimera_dashboard_blueprint_enable_ &&
+        !dual_kimera_blueprint_republished_after_data_ &&
+        kimera_pose_valid && liorf_pose_valid) {
+      publishDualKimeraDashboardBlueprint();
+      dual_kimera_blueprint_republished_after_data_ = true;
+      ROS_INFO("Re-applied the dual-Kimera Rerun dashboard blueprint after "
+               "both estimator streams became live.");
+    }
+    if (grandtour_three_sensor_dashboard_blueprint_enable_ &&
+        !grandtour_three_sensor_blueprint_republished_after_data_ &&
+        kimera_pose_valid && liorf_pose_valid) {
+      publishGrandTourThreeSensorDashboardBlueprint();
+      grandtour_three_sensor_blueprint_republished_after_data_ = true;
+      ROS_INFO("Re-applied the GrandTour three-sensor Rerun dashboard "
+               "blueprint after Hesai and Kimera became live.");
+    }
+
     if (kimera_pose_valid) {
       publishPosteriorCovarianceMetricsFromOdometry(kimera_msg, "kimera");
+    }
+    if (ekf_pose_valid) {
+      publishPosteriorCovarianceMetricsFromOdometry(ekf_msg, "ekf");
     }
     if (liorf_pose_valid) {
       publishPosteriorCovarianceMetricsFromOdometry(liorf_msg,
@@ -2383,6 +2746,15 @@ class RerunTopicVisualizer {
                     Eigen::Vector4f(40.f, 220.f, 80.f, 220.f),
                     &kimera_,
                     kimera_uncertainty_scale_);
+    }
+    if (ekf_pose_valid) {
+      publishSource(ekf_msg,
+                    ekf_pose,
+                    "ekf",
+                    "os_imu",
+                    Eigen::Vector4f(50.f, 220.f, 235.f, 235.f),
+                    &ekf_,
+                    ekf_uncertainty_scale_);
     }
     if (liorf_pose_valid && publish_secondary_enable_) {
       publishSource(liorf_msg,
@@ -2404,14 +2776,15 @@ class RerunTopicVisualizer {
       publishAlignedKimera(kimera_msg, kimera_pose, liorf_msg, liorf_pose);
     }
 
-    if (liorf_pose_valid) {
+    if (liorf_pose_valid || kimera_pose_valid || ekf_pose_valid) {
       publishCommonAlignedOverlay();
     }
 
-    if (lag_scalars_enable_ && (has_kimera || has_liorf)) {
-      const uint64_t latest_stamp_nsec =
+    if (lag_scalars_enable_ && (has_kimera || has_ekf || has_liorf)) {
+      const uint64_t latest_stamp_nsec = std::max(
+          has_ekf ? stampToNSec(ekf_msg.header.stamp) : 0ull,
           std::max(has_kimera ? stampToNSec(kimera_msg.header.stamp) : 0ull,
-                   has_liorf ? stampToNSec(liorf_msg.header.stamp) : 0ull);
+                   has_liorf ? stampToNSec(liorf_msg.header.stamp) : 0ull));
       visualizer_->setTimeNSec(latest_stamp_nsec);
       const ros::Time now = ros::Time::now();
       if (has_kimera) {
@@ -2421,6 +2794,14 @@ class RerunTopicVisualizer {
           visualizer_->drawScalar(
               "visualization/rate/kimera_stamp_interval_sec",
               kimera_interval_sec);
+        }
+      }
+      if (has_ekf) {
+        visualizer_->drawScalar("visualization/lag/ekf_stamp_age_sec",
+                                (now - ekf_msg.header.stamp).toSec());
+        if (std::isfinite(ekf_interval_sec)) {
+          visualizer_->drawScalar("visualization/rate/ekf_stamp_interval_sec",
+                                  ekf_interval_sec);
         }
       }
       if (has_liorf) {
@@ -2440,6 +2821,12 @@ class RerunTopicVisualizer {
             "visualization/lag/kimera_minus_" + secondary_entity_prefix_ +
                 "_stamp_sec",
             kimera_msg.header.stamp.toSec() - liorf_msg.header.stamp.toSec());
+      }
+      if (has_ekf && has_liorf) {
+        visualizer_->drawScalar(
+            "visualization/lag/ekf_minus_" + secondary_entity_prefix_ +
+                "_stamp_sec",
+            ekf_msg.header.stamp.toSec() - liorf_msg.header.stamp.toSec());
       }
     }
 
@@ -2661,6 +3048,120 @@ class RerunTopicVisualizer {
                             alignment.determinant);
   }
 
+  bool alignAdditionalCommonHistory(
+      const std::string& display_name,
+      const std::vector<TimedPose>& history,
+      const double window_start_stamp_sec,
+      const double window_end_stamp_sec,
+      const gtsam::Point3& origin,
+      AlignmentEstimate* alignment,
+      std::vector<gtsam::Pose3>* aligned_poses,
+      int* pair_count,
+      double* max_nearest_diff_sec,
+      bool* provisional,
+      bool* alignment_frozen,
+      AlignmentEstimate* frozen_alignment,
+      int* frozen_pair_count,
+      double* frozen_max_nearest_diff_sec) {
+    CHECK_NOTNULL(alignment);
+    CHECK_NOTNULL(aligned_poses);
+    CHECK_NOTNULL(pair_count);
+    CHECK_NOTNULL(max_nearest_diff_sec);
+    CHECK_NOTNULL(provisional);
+    CHECK_NOTNULL(alignment_frozen);
+    CHECK_NOTNULL(frozen_alignment);
+    CHECK_NOTNULL(frozen_pair_count);
+    CHECK_NOTNULL(frozen_max_nearest_diff_sec);
+    *provisional = false;
+    if (history.empty()) {
+      return false;
+    }
+
+    bool ok = false;
+    if (common_aligned_start_pose_only_enable_) {
+      if (*alignment_frozen) {
+        *alignment = *frozen_alignment;
+        *pair_count = *frozen_pair_count;
+        *max_nearest_diff_sec = *frozen_max_nearest_diff_sec;
+        ok = transformCommonFrameHistory(history,
+                                         window_start_stamp_sec,
+                                         window_end_stamp_sec,
+                                         origin,
+                                         *alignment,
+                                         aligned_poses);
+      } else {
+        ok = estimateProvisionalCommonFrameAlignment(
+            history,
+            window_start_stamp_sec,
+            window_end_stamp_sec,
+            origin,
+            alignment,
+            aligned_poses,
+            pair_count,
+            max_nearest_diff_sec);
+        if (ok) {
+          *frozen_alignment = *alignment;
+          *frozen_pair_count = *pair_count;
+          *frozen_max_nearest_diff_sec = *max_nearest_diff_sec;
+          *alignment_frozen = true;
+          LOG(INFO) << "Anchored Rerun common-frame alignment for "
+                    << display_name
+                    << " to its first timestamp-matched ground-truth pose. "
+                    << "max_timestamp_delta_sec=" << *max_nearest_diff_sec
+                    << ".";
+        }
+      }
+      *provisional = ok;
+      return ok;
+    }
+
+    if (freeze_common_aligned_overlay_alignment_enable_ &&
+        *alignment_frozen) {
+      *alignment = *frozen_alignment;
+      *pair_count = *frozen_pair_count;
+      *max_nearest_diff_sec = *frozen_max_nearest_diff_sec;
+      ok = transformCommonFrameHistory(history,
+                                       window_start_stamp_sec,
+                                       window_end_stamp_sec,
+                                       origin,
+                                       *alignment,
+                                       aligned_poses);
+    } else {
+      ok = estimateCommonFrameAlignment(history,
+                                        window_start_stamp_sec,
+                                        window_end_stamp_sec,
+                                        origin,
+                                        alignment,
+                                        aligned_poses,
+                                        pair_count,
+                                        max_nearest_diff_sec);
+      if (ok && freeze_common_aligned_overlay_alignment_enable_) {
+        *frozen_alignment = *alignment;
+        *frozen_pair_count = *pair_count;
+        *frozen_max_nearest_diff_sec = *max_nearest_diff_sec;
+        *alignment_frozen = true;
+        LOG(INFO) << "Froze Rerun common-frame alignment for " << display_name
+                  << ". pairs=" << *pair_count
+                  << ", rmse_m=" << alignment->rmse_m
+                  << ", max_timestamp_delta_sec=" << *max_nearest_diff_sec
+                  << ".";
+      }
+    }
+    if (!ok && common_aligned_provisional_start_enable_) {
+      ok = estimateProvisionalCommonFrameAlignment(
+          history,
+          window_start_stamp_sec,
+          window_end_stamp_sec,
+          origin,
+          alignment,
+          aligned_poses,
+          pair_count,
+          max_nearest_diff_sec);
+      *provisional = ok;
+    }
+    return ok;
+  }
+
   void publishCommonAlignedOverlay() {
     if (!publish_common_aligned_overlay_enable_ || !world_alignment_enable_ ||
         !ground_truth_enable_ || !ground_truth_loaded_) {
@@ -2668,15 +3169,18 @@ class RerunTopicVisualizer {
     }
 
     std::vector<TimedPose> kimera_history;
+    std::vector<TimedPose> ekf_history;
     std::vector<TimedPose> secondary_history;
     {
       std::lock_guard<std::mutex> lock(mutex_);
       kimera_history = kimera_.timed_trajectory;
+      ekf_history = ekf_.timed_trajectory;
       secondary_history = liorf_.timed_trajectory;
     }
     const bool has_secondary_history = !secondary_history.empty();
     const bool has_kimera_history = !kimera_history.empty();
-    if (!has_secondary_history && !has_kimera_history) {
+    const bool has_ekf_history = !ekf_history.empty();
+    if (!has_secondary_history && !has_kimera_history && !has_ekf_history) {
       return;
     }
 
@@ -2693,6 +3197,12 @@ class RerunTopicVisualizer {
           std::min(first_common_stamp_sec, kimera_history.front().stamp_sec);
       latest_common_stamp_sec =
           std::max(latest_common_stamp_sec, kimera_history.back().stamp_sec);
+    }
+    if (has_ekf_history) {
+      first_common_stamp_sec =
+          std::min(first_common_stamp_sec, ekf_history.front().stamp_sec);
+      latest_common_stamp_sec =
+          std::max(latest_common_stamp_sec, ekf_history.back().stamp_sec);
     }
     if (!std::isfinite(first_common_stamp_sec) ||
         !std::isfinite(latest_common_stamp_sec) ||
@@ -2742,12 +3252,16 @@ class RerunTopicVisualizer {
 
     AlignmentEstimate secondary_alignment;
     AlignmentEstimate kimera_alignment;
+    AlignmentEstimate ekf_alignment;
     std::vector<gtsam::Pose3> aligned_secondary_poses;
     std::vector<gtsam::Pose3> aligned_kimera_poses;
+    std::vector<gtsam::Pose3> aligned_ekf_poses;
     int secondary_pairs = 0;
     int kimera_pairs = 0;
+    int ekf_pairs = 0;
     double secondary_max_nearest_diff_sec = 0.0;
     double kimera_max_nearest_diff_sec = 0.0;
+    double ekf_max_nearest_diff_sec = 0.0;
     bool secondary_ok = false;
     bool secondary_provisional = false;
     if (has_secondary_history && common_aligned_start_pose_only_enable_) {
@@ -2922,7 +3436,23 @@ class RerunTopicVisualizer {
           &kimera_max_nearest_diff_sec);
       kimera_provisional = kimera_ok;
     }
-    if (!secondary_ok && !kimera_ok) {
+    bool ekf_provisional = false;
+    const bool ekf_ok = alignAdditionalCommonHistory(
+        "EKF",
+        ekf_history,
+        first_common_stamp_sec,
+        window_end_stamp_sec,
+        origin,
+        &ekf_alignment,
+        &aligned_ekf_poses,
+        &ekf_pairs,
+        &ekf_max_nearest_diff_sec,
+        &ekf_provisional,
+        &ekf_common_alignment_frozen_,
+        &frozen_ekf_common_alignment_,
+        &frozen_ekf_common_alignment_pairs_,
+        &frozen_ekf_common_alignment_max_nearest_diff_sec_);
+    if (!secondary_ok && !kimera_ok && !ekf_ok) {
       return;
     }
     if (anchor_common_aligned_start_enable_) {
@@ -2932,6 +3462,9 @@ class RerunTopicVisualizer {
       }
       if (kimera_ok) {
         anchorTrajectoryStartToOrigin(&aligned_kimera_poses);
+      }
+      if (ekf_ok) {
+        anchorTrajectoryStartToOrigin(&aligned_ekf_poses);
       }
     }
     std::vector<gtsam::Point3> gt_local_points;
@@ -2943,10 +3476,16 @@ class RerunTopicVisualizer {
     const uint64_t stamp_nsec = stampSecToNSec(window_end_stamp_sec);
     visualizer_->setTimeNSec(stamp_nsec);
     const Eigen::Vector4f gt_rgba(65.f, 140.f, 255.f, 220.f);
-    const Eigen::Vector4f secondary_rgba(245.f, 180.f, 20.f, 220.f);
-    const Eigen::Vector4f kimera_rgba(40.f, 220.f, 80.f, 220.f);
+    Eigen::Vector4f secondary_rgba(245.f, 180.f, 20.f, 220.f);
+    if (secondary_entity_prefix_ == "hesai") {
+      secondary_rgba = Eigen::Vector4f(40.f, 220.f, 80.f, 220.f);
+    } else if (secondary_entity_prefix_ == "livox") {
+      secondary_rgba = Eigen::Vector4f(180.f, 90.f, 255.f, 225.f);
+    }
+    const Eigen::Vector4f kimera_rgba(255.f, 165.f, 20.f, 225.f);
+    const Eigen::Vector4f ekf_rgba(245.f, 65.f, 60.f, 235.f);
     visualizer_->drawTrajectory(
-        "aligned/ground_truth/trajectory", gt_local_poses, gt_rgba, 2.0f);
+        "aligned/ground_truth/trajectory", gt_local_poses, gt_rgba, 2.5f);
     visualizer_->drawPoints(
         "aligned/ground_truth/samples", gt_local_points, gt_rgba, 0.12f);
     if (secondary_ok) {
@@ -2957,7 +3496,7 @@ class RerunTopicVisualizer {
       visualizer_->drawTrajectory(secondary_prefix + "/trajectory",
                                   aligned_secondary_poses,
                                   secondary_rgba,
-                                  1.75f);
+                                  2.35f);
       drawCommonFrameAlignmentScalars(secondary_prefix,
                                       secondary_alignment,
                                       secondary_pairs,
@@ -2974,12 +3513,26 @@ class RerunTopicVisualizer {
       visualizer_->drawTrajectory("aligned/kimera/trajectory",
                                   aligned_kimera_poses,
                                   kimera_rgba,
-                                  1.75f);
+                                  2.35f);
       drawCommonFrameAlignmentScalars("aligned/kimera",
                                       kimera_alignment,
                                       kimera_pairs,
                                       kimera_max_nearest_diff_sec,
                                       kimera_provisional);
+    }
+    if (ekf_ok) {
+      visualizer_->drawTf("aligned/ekf/os_imu",
+                          aligned_ekf_poses.back(),
+                          0.5f);
+      visualizer_->drawTrajectory("aligned/ekf/trajectory",
+                                  aligned_ekf_poses,
+                                  ekf_rgba,
+                                  2.5f);
+      drawCommonFrameAlignmentScalars("aligned/ekf",
+                                      ekf_alignment,
+                                      ekf_pairs,
+                                      ekf_max_nearest_diff_sec,
+                                      ekf_provisional);
     }
     if (secondary_ok) {
       visualizer_->drawScalar("aligned/metadata/" +
@@ -2996,6 +3549,12 @@ class RerunTopicVisualizer {
                               static_cast<double>(kimera_pairs));
       visualizer_->drawScalar("aligned/metadata/kimera_alignment_rmse_m",
                               kimera_alignment.rmse_m);
+    }
+    if (ekf_ok) {
+      visualizer_->drawScalar("aligned/metadata/ekf_alignment_pairs",
+                              static_cast<double>(ekf_pairs));
+      visualizer_->drawScalar("aligned/metadata/ekf_alignment_rmse_m",
+                              ekf_alignment.rmse_m);
     }
     if (secondary_entity_prefix_ == "glim") {
       visualizer_->drawScalar("aligned/metadata/common_alignment_glim_to_gt",
@@ -3552,6 +4111,7 @@ class RerunTopicVisualizer {
   tf2_ros::Buffer tf_buffer_;
   tf2_ros::TransformListener tf_listener_;
   ros::Subscriber kimera_sub_;
+  ros::Subscriber ekf_sub_;
   ros::Subscriber liorf_sub_;
   ros::Subscriber liorf_local_map_sub_;
   ros::Subscriber liorf_current_scan_sub_;
@@ -3559,9 +4119,11 @@ class RerunTopicVisualizer {
   ros::Subscriber kimera_landmarks_sub_;
   ros::Subscriber cbs_g2k_sub_;
   ros::Subscriber cbs_k2g_sub_;
+  ros::Subscriber cbs_full_mesh_sub_;
   ros::WallTimer timer_;
   std::mutex mutex_;
   SourceState kimera_;
+  SourceState ekf_;
   SourceState liorf_;
   CloudState liorf_local_map_;
   CloudState liorf_current_scan_;
@@ -3569,10 +4131,17 @@ class RerunTopicVisualizer {
   CloudState kimera_landmarks_;
   BeliefTrafficState cbs_g2k_;
   BeliefTrafficState cbs_k2g_;
+  BeliefTrafficState cbs_h2l_;
+  BeliefTrafficState cbs_h2k_;
+  BeliefTrafficState cbs_l2h_;
+  BeliefTrafficState cbs_l2k_;
+  BeliefTrafficState cbs_k2h_;
+  BeliefTrafficState cbs_k2l_;
   std::unique_ptr<RosRerunVisualizer> visualizer_;
   std::unique_ptr<rerun::RecordingStream> blueprint_stream_;
 
   std::string kimera_odom_topic_;
+  std::string ekf_odom_topic_;
   std::string liorf_odom_topic_;
   std::string secondary_entity_prefix_ = "liorf";
   std::string secondary_frame_name_ = "lidar_link";
@@ -3582,6 +4151,7 @@ class RerunTopicVisualizer {
   std::string kimera_landmarks_topic_;
   std::string cbs_g2k_odom_belief_topic_;
   std::string cbs_k2g_odom_belief_topic_;
+  std::string cbs_full_mesh_odom_belief_topic_;
   std::string ground_truth_path_;
   std::string image_topic_;
   std::string image_entity_path_ = "video/rgb/image";
@@ -3589,6 +4159,7 @@ class RerunTopicVisualizer {
   std::string rerun_host_;
   double publish_rate_hz_ = 5.0;
   double kimera_uncertainty_scale_ = 1.25;
+  double ekf_uncertainty_scale_ = 1.25;
   double secondary_uncertainty_scale_ = 1.25;
   double aligned_kimera_uncertainty_scale_ = 1.25;
   double ground_truth_max_timestamp_diff_sec_ = 0.75;
@@ -3609,8 +4180,10 @@ class RerunTopicVisualizer {
   bool secondary_point_cloud_publish_raw_enable_ = false;
   bool kimera_landmarks_enable_ = true;
   bool cbs_metrics_enable_ = false;
+  bool cbs_full_mesh_metrics_enable_ = false;
   bool accumulated_covariance_enable_ = true;
   bool publish_raw_kimera_enable_ = true;
+  bool ekf_enable_ = false;
   bool publish_secondary_enable_ = true;
   bool publish_aligned_kimera_enable_ = true;
   bool publish_legacy_online_alignment_enable_ = false;
@@ -3624,6 +4197,10 @@ class RerunTopicVisualizer {
   bool ground_truth_enable_ = false;
   bool raw_cbs_dashboard_blueprint_enable_ = false;
   bool standalone_glim_dashboard_blueprint_enable_ = false;
+  bool dual_kimera_dashboard_blueprint_enable_ = false;
+  bool grandtour_three_sensor_dashboard_blueprint_enable_ = false;
+  bool dual_kimera_blueprint_republished_after_data_ = false;
+  bool grandtour_three_sensor_blueprint_republished_after_data_ = false;
   bool ground_truth_loaded_ = false;
   bool ground_truth_published_ = false;
   bool ground_truth_wait_logged_ = false;
@@ -3645,14 +4222,18 @@ class RerunTopicVisualizer {
   std::vector<gtsam::Pose3> aligned_kimera_trajectory_;
   bool secondary_common_alignment_frozen_ = false;
   bool kimera_common_alignment_frozen_ = false;
+  bool ekf_common_alignment_frozen_ = false;
   AlignmentEstimate frozen_secondary_common_alignment_;
   AlignmentEstimate frozen_kimera_common_alignment_;
+  AlignmentEstimate frozen_ekf_common_alignment_;
   AlignmentEstimate latest_secondary_common_alignment_;
   gtsam::Point3 latest_common_origin_;
   int frozen_secondary_common_alignment_pairs_ = 0;
   int frozen_kimera_common_alignment_pairs_ = 0;
+  int frozen_ekf_common_alignment_pairs_ = 0;
   double frozen_secondary_common_alignment_max_nearest_diff_sec_ = 0.0;
   double frozen_kimera_common_alignment_max_nearest_diff_sec_ = 0.0;
+  double frozen_ekf_common_alignment_max_nearest_diff_sec_ = 0.0;
   bool secondary_common_alignment_ready_for_clouds_ = false;
   size_t image_published_count_ = 0u;
   std::map<std::string, double> covariance_trace_reference_m2_;

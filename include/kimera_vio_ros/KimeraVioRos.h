@@ -72,6 +72,8 @@ class KimeraVioRos {
   void publishKimeraFactorGraphInspector(
       const BackendOutput::ConstPtr& output);
 
+  std::string headlessRerunEntityPath(const std::string& suffix) const;
+
   void publishHeadlessOdometryBelief(const BackendOutput::ConstPtr& output);
 
   void poseOdomBeliefInCallback(
@@ -134,6 +136,8 @@ class KimeraVioRos {
   size_t external_beliefs_queue_limit_ = 800u;
 
   bool headless_cbs_belief_bridge_enable_ = false;
+  bool cbs_belief_publish_enable_ = false;
+  bool cbs_belief_receive_enable_ = false;
   bool headless_odometry_publish_enable_ = false;
   bool headless_landmarks_publish_enable_ = false;
   int headless_landmarks_max_points_ = 3000;
@@ -150,6 +154,7 @@ class KimeraVioRos {
   std::string base_link_frame_id_;
   std::string headless_rerun_recording_id_;
   std::string headless_rerun_host_;
+  std::string headless_rerun_entity_prefix_ = "kimera";
   std::string cbs_odom_belief_in_topic_;
   std::string cbs_odom_belief_out_topic_;
   std::string cbs_external_pose_frame_id_;

@@ -1,0 +1,100 @@
+<launch>
+  <!-- One isolated Kimera mono estimator for the dual-camera CBS experiment. -->
+  <arg name="instance_ns"/>
+  <arg name="robot_id"/>
+  <arg name="cbs_agent_id"/>
+  <arg name="cbs_requesting_agent_id"/>
+  <arg name="params_folder"/>
+  <arg name="runtime_output_path"/>
+  <arg name="camera_compressed_topic"/>
+  <arg name="camera_raw_topic"/>
+  <arg name="imu_topic" default="/alphasense_driver_ros/imu"/>
+  <arg name="cbs_belief_in_topic"/>
+  <arg name="cbs_belief_out_topic"/>
+  <arg name="cbs_publish_enable" default="true"/>
+  <arg name="cbs_receive_enable" default="true"/>
+  <arg name="cbs_receive_start_delay_sec" default="0.0"/>
+  <arg name="rerun_host" default="rerun+http://172.17.0.1:9876/proxy"/>
+  <arg name="rerun_recording_id"/>
+  <arg name="rerun_entity_prefix"/>
+  <arg name="factor_graph_inspector_stride" default="5"/>
+  <arg name="covariance_audit_max_samples" default="1000"/>
+  <arg name="skip_initial_frames" default="2"/>
+
+  <node pkg="kimera_vio_ros"
+        type="compressed_to_raw_bridge.py"
+        name="$(arg instance_ns)_compressed_bridge"
+        output="screen">
+    <param name="input_topic" value="$(arg camera_compressed_topic)"/>
+    <param name="output_topic" value="$(arg camera_raw_topic)"/>
+    <param name="output_encoding" value="mono8"/>
+    <param name="queue_size" value="30"/>
+    <param name="skip_initial_frames" value="$(arg skip_initial_frames)"/>
+  </node>
+
+  <group ns="$(arg instance_ns)">
+    <include file="$(find kimera_vio_ros)/launch/kimera_vio_ros.launch">
+      <arg name="robot_id" value="$(arg robot_id)"/>
+      <arg name="multirobot" value="true"/>
+      <arg name="dataset_name" value="NewerCollege2021"/>
+      <arg name="online" value="true"/>
+      <arg name="params_folder" value="$(arg params_folder)"/>
+      <arg name="log_output_path" value="$(arg runtime_output_path)"/>
+      <arg name="left_cam_topic" value="$(arg camera_raw_topic)"/>
+      <arg name="right_cam_topic" value=""/>
+      <arg name="imu_topic" value="$(arg imu_topic)"/>
+      <arg name="odom_frame_id" value="odom"/>
+      <arg name="base_link_frame_id" value="imu_sensor_frame"/>
+      <arg name="map_frame_id" value="map"/>
+      <arg name="left_cam_frame_id" value="camera_sensor_frame"/>
+      <!-- All presentation output is headless through Rerun.  Disabling the
+           legacy VTK/RViz visualizer is required when two instances share the
+           headless Docker container. -->
+      <arg name="visualize" value="false"/>
+      <arg name="viz_type" value="2"/>
+      <arg name="use_rviz" value="false"/>
+      <arg name="use_lcd" value="false"/>
+      <arg name="publish_vlc_frames" value="false"/>
+
+      <arg name="cbs_belief_bridge_enable" value="true"/>
+      <arg name="cbs_belief_publish_enable" value="$(arg cbs_publish_enable)"/>
+      <arg name="cbs_belief_receive_enable" value="$(arg cbs_receive_enable)"/>
+      <arg name="cbs_agent_id" value="$(arg cbs_agent_id)"/>
+      <arg name="cbs_odom_belief_in_topic" value="$(arg cbs_belief_in_topic)"/>
+      <arg name="cbs_odom_belief_out_topic" value="$(arg cbs_belief_out_topic)"/>
+      <arg name="cbs_belief_receive_start_delay_sec"
+           value="$(arg cbs_receive_start_delay_sec)"/>
+      <arg name="cbs_external_pose_frame_id" value="imu_sensor_frame"/>
+      <arg name="cbs_odom_requesting_agent_id"
+           value="$(arg cbs_requesting_agent_id)"/>
+      <arg name="cbs_odom_sender_mode" value="time_horizon_window"/>
+      <arg name="cbs_odom_covariance_mode" value="schur_relative_between"/>
+      <arg name="cbs_use_temporary_cbs_linear_factors" value="false"/>
+      <arg name="cbs_odom_factor_mode" value="persistent"/>
+      <arg name="cbs_external_odom_duration_gate_enable" value="true"/>
+      <arg name="cbs_external_odom_duration_tolerance_sec" value="0.06"/>
+      <arg name="cbs_external_odom_duration_ratio_min" value="0.5"/>
+      <arg name="cbs_external_odom_duration_ratio_max" value="2.0"/>
+      <arg name="cbs_odom_horizon_sec" value="0.20"/>
+      <arg name="cbs_odom_horizon_tolerance_sec" value="0.06"/>
+      <arg name="cbs_odom_max_horizon_pairs_per_update" value="25"/>
+      <arg name="cbs_health_aware_enable" value="false"/>
+      <arg name="cbs_covariance_exchange_audit_max_samples"
+           value="$(arg covariance_audit_max_samples)"/>
+      <arg name="cbs_covariance_exchange_audit_stride" value="1"/>
+
+      <!-- Geometry is supplied by the combined topic visualizer.  Each
+           estimator publishes only its namespaced live factor graph here. -->
+      <arg name="rerun_visualizer_enable" value="false"/>
+      <arg name="rerun_recording_id" value="$(arg rerun_recording_id)"/>
+      <arg name="rerun_host" value="$(arg rerun_host)"/>
+      <arg name="rerun_entity_prefix" value="$(arg rerun_entity_prefix)"/>
+      <arg name="rerun_factor_graph_inspector_enable" value="true"/>
+      <arg name="rerun_factor_graph_inspector_topology_enable" value="true"/>
+      <arg name="rerun_factor_graph_inspector_stride"
+           value="$(arg factor_graph_inspector_stride)"/>
+      <arg name="rerun_factor_graph_inspector_include_smart_factors"
+           value="false"/>
+    </include>
+  </group>
+</launch>

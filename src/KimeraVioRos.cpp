@@ -589,6 +589,12 @@ KimeraVioRos::KimeraVioRos()
 
   nh_private_.param(
       "cbs_belief_bridge_enable", headless_cbs_belief_bridge_enable_, true);
+  nh_private_.param("cbs_belief_publish_enable",
+                    cbs_belief_publish_enable_,
+                    headless_cbs_belief_bridge_enable_);
+  nh_private_.param("cbs_belief_receive_enable",
+                    cbs_belief_receive_enable_,
+                    headless_cbs_belief_bridge_enable_);
   nh_private_.param(
       "headless_odometry_publish_enable", headless_odometry_publish_enable_, true);
   nh_private_.param("headless_landmarks_publish_enable",
@@ -632,6 +638,20 @@ KimeraVioRos::KimeraVioRos()
   nh_private_.param<std::string>(
       "rerun_recording_id", headless_rerun_recording_id_, "");
   nh_private_.param<std::string>("rerun_host", headless_rerun_host_, "auto");
+  nh_private_.param<std::string>(
+      "rerun_entity_prefix", headless_rerun_entity_prefix_, "kimera");
+  while (!headless_rerun_entity_prefix_.empty() &&
+         headless_rerun_entity_prefix_.front() == '/') {
+    headless_rerun_entity_prefix_.erase(
+        headless_rerun_entity_prefix_.begin());
+  }
+  while (!headless_rerun_entity_prefix_.empty() &&
+         headless_rerun_entity_prefix_.back() == '/') {
+    headless_rerun_entity_prefix_.pop_back();
+  }
+  if (headless_rerun_entity_prefix_.empty()) {
+    headless_rerun_entity_prefix_ = "kimera";
+  }
   if (headless_rerun_host_.empty() || headless_rerun_host_ == "auto") {
     headless_rerun_host_ = defaultRerunHost();
   }
@@ -767,6 +787,17 @@ KimeraVioRos::~KimeraVioRos() {
     lcd_registration_server_->stop();
     lcd_registration_server_.reset();
   }
+}
+
+std::string KimeraVioRos::headlessRerunEntityPath(
+    const std::string& suffix) const {
+  if (suffix.empty()) {
+    return headless_rerun_entity_prefix_;
+  }
+  if (suffix.front() == '/') {
+    return headless_rerun_entity_prefix_ + suffix;
+  }
+  return headless_rerun_entity_prefix_ + "/" + suffix;
 }
 
 bool KimeraVioRos::runKimeraVio() {
@@ -1088,17 +1119,22 @@ void KimeraVioRos::initializeHeadlessCbsBeliefBridge() {
   }
 
   ros::NodeHandle nh;
-  pose_odom_belief_out_pub_ =
-      nh.advertise<liorf::pose_odom_belief_array>(
-          cbs_odom_belief_out_topic_, 50);
-  pose_odom_belief_in_sub_ =
-      nh.subscribe<liorf::pose_odom_belief_array>(
-          cbs_odom_belief_in_topic_,
-          50,
-          &KimeraVioRos::poseOdomBeliefInCallback,
-          this,
-          ros::TransportHints().tcpNoDelay());
-  if (cbs_belief_receive_start_delay_sec_ > 0.0) {
+  if (cbs_belief_publish_enable_) {
+    pose_odom_belief_out_pub_ =
+        nh.advertise<liorf::pose_odom_belief_array>(
+            cbs_odom_belief_out_topic_, 50);
+  }
+  if (cbs_belief_receive_enable_) {
+    pose_odom_belief_in_sub_ =
+        nh.subscribe<liorf::pose_odom_belief_array>(
+            cbs_odom_belief_in_topic_,
+            50,
+            &KimeraVioRos::poseOdomBeliefInCallback,
+            this,
+            ros::TransportHints().tcpNoDelay());
+  }
+  if (cbs_belief_receive_enable_ &&
+      cbs_belief_receive_start_delay_sec_ > 0.0) {
     cbs_belief_receive_clock_sub_ =
         nh.subscribe<rosgraph_msgs::Clock>(
             "/clock",
@@ -1112,7 +1148,9 @@ void KimeraVioRos::initializeHeadlessCbsBeliefBridge() {
             << static_cast<char>(cbs_agent_id_) << "', odom_in='"
             << cbs_odom_belief_in_topic_
             << "', odom_out='" << cbs_odom_belief_out_topic_
-            << "', external_pose_frame='" << cbs_external_pose_frame_id_
+            << "', publish=" << (cbs_belief_publish_enable_ ? "true" : "false")
+            << ", receive=" << (cbs_belief_receive_enable_ ? "true" : "false")
+            << ", external_pose_frame='" << cbs_external_pose_frame_id_
             << "', receive_start_delay_sec="
             << cbs_belief_receive_start_delay_sec_
             << "'.";
@@ -1967,11 +2005,14 @@ void KimeraVioRos::publishKimeraFactorGraphInspector(
 
   if (headless_rerun_factor_graph_inspector_topology_enable_) {
     headless_rerun_visualizer_->drawGraph(
-        "kimera/factor_graph_inspector/topology", nodes, edges, false);
+        headlessRerunEntityPath("factor_graph_inspector/topology"),
+        nodes,
+        edges,
+        false);
   }
 
   const std::string spatial_path =
-      "kimera/factor_graph_inspector/spatial/";
+      headlessRerunEntityPath("factor_graph_inspector/spatial/");
   if (headless_rerun_factor_graph_trajectory_.size() > 1u) {
     headless_rerun_visualizer_->drawTrajectory(
         spatial_path + "context_trajectory",
@@ -2225,7 +2266,8 @@ void KimeraVioRos::publishKimeraFactorGraphInspector(
                            5.0f,
                            false);
 
-  const std::string counts_path = "kimera/factor_graph_inspector/counts/";
+  const std::string counts_path =
+      headlessRerunEntityPath("factor_graph_inspector/counts/");
   const auto draw_count = [&](const std::string& name, const size_t value) {
     headless_rerun_visualizer_->drawScalar(counts_path + name,
                                            static_cast<double>(value));
@@ -2303,6 +2345,7 @@ void KimeraVioRos::publishHeadlessOdometryBelief(
   try {
     CHECK(output);
     if (!headless_cbs_belief_bridge_enable_ ||
+        !cbs_belief_publish_enable_ ||
         output->cbs_outgoing_odom_beliefs_.empty()) {
       return;
     }
@@ -2325,9 +2368,13 @@ void KimeraVioRos::publishHeadlessOdometryBelief(
     for (const auto& cbs_belief : output->cbs_outgoing_odom_beliefs_) {
       liorf::pose_odom_belief belief;
       belief.header = msg.header;
-      belief.source_agent = cbs_belief.source_agent;
+      // The core Kimera backend uses the historical internal symbol 'k'.
+      // The ROS wrapper owns the transport identity, which must be unique when
+      // multiple Kimera instances exchange beliefs in one graph.
+      belief.source_agent = cbs_agent_id_;
       belief.from_pose_index = cbs_belief.from_pose_index;
       belief.to_pose_index = cbs_belief.to_pose_index;
+      belief.revision = cbs_belief.revision;
       belief.from_stamp_sec = cbs_belief.from_stamp_sec;
       belief.to_stamp_sec =
           cbs_belief.to_stamp_sec > 0.0 ? cbs_belief.to_stamp_sec
@@ -2541,6 +2588,7 @@ void KimeraVioRos::poseOdomBeliefInCallback(
       converted.source_agent = belief.source_agent;
       converted.from_pose_index = belief.from_pose_index;
       converted.to_pose_index = belief.to_pose_index;
+      converted.revision = belief.revision;
       converted.sender_from_pose_index = belief.from_pose_index;
       converted.sender_to_pose_index = belief.to_pose_index;
       converted.from_stamp_sec = belief.from_stamp_sec;

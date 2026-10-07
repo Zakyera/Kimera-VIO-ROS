@@ -1,0 +1,102 @@
+<launch>
+  <!-- GrandTour ETH-1 primary Kimera mode: one front camera and the same
+       HG4930/CPT7 IMU used by GLIM. -->
+  <arg name="dataset_name" value="GrandTourEth1MonoSharedCpt7"/>
+  <arg name="params_folder"/>
+  <arg name="multirobot" default="true"/>
+  <arg name="online" default="true"/>
+  <arg name="should_use_sim_time" default="true"/>
+  <param name="use_sim_time" value="$(arg should_use_sim_time)"/>
+
+  <arg name="log_output" default="true"/>
+  <arg name="log_output_path"
+       default="/workspace/cbs_gtsam4.3/runs/runtime_kimera_logs/grandtour_eth1_mono_cpt7"/>
+  <arg name="log_gt_data" default="false"/>
+  <arg name="gt_topic" default=""/>
+  <arg name="rosbag_path" default="" unless="$(arg online)"/>
+
+  <arg name="left_cam_compressed_topic"
+       default="/boxi/alphasense/front_left/image_raw/compressed"/>
+  <arg name="left_cam_topic" default="/grandtour/front_left/image_raw"/>
+  <arg name="right_cam_topic" default=""/>
+  <arg name="imu_topic" default="/boxi/cpt7/imu"/>
+  <arg name="external_odom_topic" default=""/>
+  <arg name="rgb_image_transport" default="raw"/>
+  <arg name="decode_left_compressed" default="true"/>
+  <arg name="skip_initial_frames" default="2"/>
+
+  <arg name="odom_frame_id" default="odom"/>
+  <arg name="base_link_frame_id" default="cpt7_imu"/>
+  <arg name="map_frame_id" default="map"/>
+  <arg name="left_cam_frame_id" default="alphasense_front_left"/>
+  <!-- The ROS wrapper validates this label even for a MonoImu pipeline; no
+       right-camera topic is subscribed or replayed. -->
+  <arg name="right_cam_frame_id" default="unused_right_camera"/>
+
+  <arg name="use_lcd" default="false"/>
+  <arg name="publish_vlc_frames" default="false"/>
+  <arg name="visualize" default="false"/>
+  <arg name="viz_type" default="2"/>
+  <arg name="use_rviz" default="false"/>
+  <arg name="node_output" default="screen"/>
+  <arg name="rerun_visualizer_enable" default="false"/>
+  <arg name="rerun_recording_id" default="grandtour_eth1_mono_cpt7"/>
+  <arg name="rerun_host"
+       default="rerun+http://172.17.0.1:9876/proxy"/>
+  <arg name="rerun_entity_prefix" default="kimera"/>
+  <arg name="rerun_scalar_metrics_enable" default="false"/>
+  <arg name="rerun_geometry_enable" default="false"/>
+  <arg name="rerun_factor_graph_enable" default="false"/>
+  <arg name="rerun_factor_graph_inspector_enable" default="false"/>
+  <arg name="rerun_factor_graph_inspector_topology_enable" default="true"/>
+  <arg name="rerun_factor_graph_inspector_stride" default="5"/>
+  <arg name="rerun_factor_graph_inspector_include_smart_factors"
+       default="false"/>
+  <arg name="rerun_factor_graph_inspector_max_smart_factors" default="20"/>
+  <arg name="rerun_world_alignment_enable" default="false"/>
+
+  <arg name="cbs_belief_publish_enable" default="false"/>
+  <arg name="cbs_belief_receive_enable" default="false"/>
+  <arg name="cbs_belief_bridge_enable"
+       default="$(eval arg('cbs_belief_publish_enable') or arg('cbs_belief_receive_enable'))"/>
+  <arg name="cbs_agent_id" default="k"/>
+  <arg name="cbs_backend_enable" default="false"/>
+  <arg name="cbs_health_aware_enable" default="false"/>
+  <arg name="cbs_odom_belief_in_topic"
+       default="/kimera/cbs/odom_belief_in"/>
+  <arg name="cbs_odom_belief_out_topic"
+       default="/kimera/cbs/odom_belief_out"/>
+  <arg name="cbs_belief_receive_start_delay_sec" default="0.0"/>
+  <arg name="cbs_external_belief_timestamp_tolerance_sec" default="0.20"/>
+  <!-- Both estimator bodies are cpt7_imu, so no CBS frame conjugation is
+       required in the primary monocular mode. -->
+  <arg name="cbs_external_pose_frame_id" default="cpt7_imu"/>
+  <arg name="cbs_odom_sender_mode" default="time_horizon_window"/>
+  <arg name="cbs_odom_requesting_agent_id" default="g"/>
+  <arg name="cbs_external_odom_duration_gate_enable" default="true"/>
+  <arg name="cbs_external_odom_duration_tolerance_sec" default="0.06"/>
+  <arg name="cbs_external_odom_duration_ratio_min" default="0.5"/>
+  <arg name="cbs_external_odom_duration_ratio_max" default="2.0"/>
+  <arg name="cbs_odom_horizon_sec" default="0.30"/>
+  <arg name="cbs_odom_horizon_tolerance_sec" default="0.06"/>
+  <arg name="cbs_odom_max_horizon_pairs_per_update" default="25"/>
+  <arg name="cbs_use_temporary_cbs_linear_factors" default="false"/>
+  <arg name="cbs_odom_factor_mode" default="persistent"/>
+  <arg name="cbs_odom_covariance_mode" default="schur_relative_between"/>
+  <arg name="cbs_l2k_odom_factor_covariance_scale" default="1.0"/>
+
+  <node if="$(arg decode_left_compressed)"
+        pkg="kimera_vio_ros"
+        type="compressed_to_raw_bridge.py"
+        name="grandtour_front_left_compressed_bridge"
+        output="screen">
+    <param name="input_topic" value="$(arg left_cam_compressed_topic)"/>
+    <param name="output_topic" value="$(arg left_cam_topic)"/>
+    <param name="output_encoding" value="mono8"/>
+    <param name="queue_size" value="30"/>
+    <param name="skip_initial_frames" value="$(arg skip_initial_frames)"/>
+  </node>
+
+  <include file="$(find kimera_vio_ros)/launch/kimera_vio_ros.launch"
+           pass_all_args="true"/>
+</launch>

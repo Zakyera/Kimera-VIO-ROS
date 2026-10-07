@@ -41,6 +41,9 @@ file and include this one to launch KimeraVIO on the dataset of your choice -->
 
   <arg name="use_external_odom" default="false"/>
   <arg name="cbs_belief_bridge_enable" default="true"/>
+  <arg name="cbs_belief_publish_enable" default="$(arg cbs_belief_bridge_enable)"/>
+  <arg name="cbs_belief_receive_enable" default="$(arg cbs_belief_bridge_enable)"/>
+  <arg name="cbs_agent_id" default="k"/>
   <arg name="cbs_odom_belief_in_topic" default="/kimera/cbs/odom_belief_in"/>
   <arg name="cbs_odom_belief_out_topic" default="/kimera/cbs/odom_belief_out"/>
   <!-- Optional Stage 2B YAML. Empty means the section is genuinely absent. -->
@@ -67,6 +70,8 @@ file and include this one to launch KimeraVIO on the dataset of your choice -->
   <arg name="cbs_use_persistent_bpsam_for_main_backend" default="false"/>
   <arg name="cbs_log_covariance_sanity_diff" default="false"/>
   <arg name="cbs_backend_enable" default="true"/>
+  <arg name="cbs_live_revision_enable" default="false"/>
+  <arg name="kimera_bad_update_audit_dir" default=""/>
   <arg name="cbs_enable_soft_reset" default="true"/>
   <arg name="cbs_use_raw_previous_belief_gate" default="false"/>
   <arg name="cbs_reject_first_message" default="true"/>
@@ -77,6 +82,7 @@ file and include this one to launch KimeraVIO on the dataset of your choice -->
   <arg name="cbs_relative_covariance_matrix_dump_skip" default="0"/>
   <arg name="cbs_relative_covariance_matrix_dump_limit" default="3"/>
   <arg name="cbs_relative_covariance_matrix_dump_trace_max" default="0.0"/>
+  <arg name="cbs_active_factor_diagnostic_enable" default="true"/>
   <arg name="cbs_active_factor_detail_diagnostic_enable" default="false"/>
   <arg name="cbs_active_factor_detail_max_rows_per_update" default="1000"/>
   <arg name="cbs_covariance_exchange_audit_max_samples" default="0"/>
@@ -197,6 +203,7 @@ file and include this one to launch KimeraVIO on the dataset of your choice -->
   <arg name="rerun_visualizer_enable" default="false"/>
   <arg name="rerun_recording_id" default=""/>
   <arg name="rerun_host" default="rerun+http://172.18.0.1:9876/proxy"/>
+  <arg name="rerun_entity_prefix" default="kimera"/>
   <arg name="rerun_scalar_metrics_enable" default="false"/>
   <arg name="rerun_geometry_enable" default="true"/>
   <arg name="rerun_factor_graph_enable" default="true"/>
@@ -268,6 +275,8 @@ file and include this one to launch KimeraVIO on the dataset of your choice -->
               --cbs_use_persistent_bpsam_for_main_backend=$(arg cbs_use_persistent_bpsam_for_main_backend)
               --cbs_log_covariance_sanity_diff=$(arg cbs_log_covariance_sanity_diff)
               --cbs_backend_enable=$(arg cbs_backend_enable)
+              --cbs_live_revision_enable=$(arg cbs_live_revision_enable)
+              --kimera_bad_update_audit_dir=$(arg kimera_bad_update_audit_dir)
               --cbs_enable_soft_reset=$(arg cbs_enable_soft_reset)
               --cbs_use_raw_previous_belief_gate=$(arg cbs_use_raw_previous_belief_gate)
               --cbs_reject_first_message=$(arg cbs_reject_first_message)
@@ -278,6 +287,7 @@ file and include this one to launch KimeraVIO on the dataset of your choice -->
               --cbs_relative_covariance_matrix_dump_skip=$(arg cbs_relative_covariance_matrix_dump_skip)
               --cbs_relative_covariance_matrix_dump_limit=$(arg cbs_relative_covariance_matrix_dump_limit)
               --cbs_relative_covariance_matrix_dump_trace_max=$(arg cbs_relative_covariance_matrix_dump_trace_max)
+              --cbs_active_factor_diagnostic_enable=$(arg cbs_active_factor_diagnostic_enable)
               --cbs_active_factor_detail_diagnostic_enable=$(arg cbs_active_factor_detail_diagnostic_enable)
               --cbs_active_factor_detail_max_rows_per_update=$(arg cbs_active_factor_detail_max_rows_per_update)
               --cbs_covariance_exchange_audit_max_samples=$(arg cbs_covariance_exchange_audit_max_samples)
@@ -364,6 +374,9 @@ file and include this one to launch KimeraVIO on the dataset of your choice -->
     <param name="bow_skip_num"          value="$(arg bow_skip_num)" />
     <param name="publish_vlc_frames"    value="$(arg publish_vlc_frames)" />
     <param name="cbs_belief_bridge_enable" value="$(arg cbs_belief_bridge_enable)"/>
+    <param name="cbs_belief_publish_enable" value="$(arg cbs_belief_publish_enable)"/>
+    <param name="cbs_belief_receive_enable" value="$(arg cbs_belief_receive_enable)"/>
+    <param name="cbs_agent_id" value="$(arg cbs_agent_id)"/>
     <param name="cbs_odom_belief_in_topic" value="$(arg cbs_odom_belief_in_topic)"/>
     <param name="cbs_odom_belief_out_topic" value="$(arg cbs_odom_belief_out_topic)"/>
     <param name="cbs_belief_forward_queue_limit" value="$(arg cbs_belief_forward_queue_limit)"/>
@@ -375,6 +388,7 @@ file and include this one to launch KimeraVIO on the dataset of your choice -->
     <param name="rerun_visualizer_enable" value="$(arg rerun_visualizer_enable)"/>
     <param name="rerun_recording_id" value="$(arg rerun_recording_id)"/>
     <param name="rerun_host" value="$(arg rerun_host)"/>
+    <param name="rerun_entity_prefix" value="$(arg rerun_entity_prefix)"/>
     <param name="rerun_scalar_metrics_enable"
            value="$(arg rerun_scalar_metrics_enable)"/>
     <param name="rerun_geometry_enable"
